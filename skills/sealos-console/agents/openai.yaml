@@ -1,4 +1,4 @@
 interface:
   display_name: "Sealos Console"
-  short_description: "Create Sealos apps, upgrade images, and simulate APIs"
-  default_prompt: "Use $sealos-console to inspect a Sealos workspace and plan the requested application or database operation."
+  short_description: "Operate Sealos apps, observe workloads, and manage objects"
+  default_prompt: "Use $sealos-console to inspect a Sealos workspace and plan the requested application, database, observation or object-storage operation."

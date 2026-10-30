@@ -1,6 +1,6 @@
 # Operation reference
 
-All commands emit JSON. Common flags can appear before or after commands. All operations use console APIs; there is no API-selection flag.
+All commands emit JSON. Common flags can appear before or after commands. Resource management uses console APIs; object transfers use the browser-compatible S3 endpoint; there is no API-selection flag.
 
 ## Application creation
 

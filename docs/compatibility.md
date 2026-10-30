@@ -43,3 +43,13 @@ The simulated `Running`/ready states are synthetic. Simulated write results are 
 ## Errors
 
 Legacy endpoints can return HTTP 200 with a non-2xx business `code`; both levels are checked. Server error payloads and raw environment values are omitted from CLI output. A timeout can happen after the server has committed a write. Inspect resource state before manually retrying; the CLI never retries writes or performs automatic rollback.
+
+## Observation and object storage (v0.4.0)
+
+App log snapshots/streams, events, Pod inventory, instantaneous container metrics and CPU/memory history have been verified with a real account using read-only operations. Database Pods/logs/events and CPU/memory history also returned usable responses. Empty log responses can omit `data`; they are reported as `no-data`. App history timestamps are sent as milliseconds, database history as seconds. Their payload formats and metric units differ. Follow responses are raw text under an event-stream content type, not SSE `data:` frames. A stream opening successfully does not prove a healthy workload or distinguish server errors embedded in raw log text.
+
+Bucket inventory, S3 object listing and downloading an existing small object have been verified on a real deployment. Real create/upload operations were not performed; their contracts and safeguards are tested locally. Object storage follows the historical `system-objectstorage` provider, which was removed from the main upstream tree in [#7186](https://github.com/labring/sealos/pull/7186); this does not establish support on newer component builds. Missing providers fail explicitly.
+
+`GET /api/user/init` can create a storage user, so it is exposed only by explicit `storage connect --execute`. S3 file operations thereafter use cached workspace credentials, HTTPS, path-style SigV4 in `us-east-1`, and no redirects or automatic retries. No bucket is created directly through S3. The console bucket-create endpoint is an upsert: duplicate preflight is not an atomic concurrency guard. Uploads rely on server enforcement of `If-None-Match: *`; verify that behavior in an isolated workspace before production writes. Downloads do not overwrite local paths and require hard-link support.
+
+The simulator seeds synthetic metrics/logs/events and a bucket/object, validates signed S3 requests and models conditional uploads. It does not validate the real storage controller, object-store conditional-write support, capacity, retention or permissions. No deployment addresses, credentials, object contents or raw application logs are included in the published project.

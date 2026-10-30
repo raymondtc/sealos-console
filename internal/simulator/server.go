@@ -57,6 +57,8 @@ type Server struct {
 	networks          map[string][]any
 	DisableHTTPS      bool
 	version           int
+	buckets           map[string]object
+	objects           map[string]map[string]storedObject
 	token, credential string
 }
 
@@ -64,6 +66,8 @@ func New(baseURL, fault string) *Server {
 	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"workspaceId":"ns-demo","workspaceUid":"00000000-0000-4000-8000-000000000001"}`))
 	s := &Server{BaseURL: baseURL, Fault: fault, Delay: 35 * time.Second, apps: map[string]object{}, dbs: map[string]object{}, networks: map[string][]any{}, version: 1,
 		token: "mock." + payload + ".not-a-real-signature", credential: "apiVersion: v1\ncontexts:\n- context:\n    namespace: ns-demo\n  name: mock\ncurrent-context: mock\n"}
+	s.buckets = map[string]object{"archive": {"name": "demo-archive", "crName": "archive", "policy": "private", "isComplete": true}}
+	s.objects = map[string]map[string]storedObject{"demo-archive": {"hello.txt": {Data: []byte("hello from simulated storage\n")}}}
 	s.apps["web"] = s.newApp("web", "nginx:1.27.4", 1)
 	worker := s.newApp("worker", "busybox:1.36.0", 1)
 	pod := objectOf(lookup(worker, "spec", "template", "spec"))
@@ -105,6 +109,10 @@ func (s *Server) sortedApps() []any {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.URL.Path, "/api/") {
+		s.serveS3(w, r)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	// This service accepts only loopback traffic and uses synthetic demo credentials.
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -138,6 +146,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body["stream"] == true && (r.URL.Path == "/api/getPodLogs" || r.URL.Path == "/api/pod/getPodLogs") && status == 200 {
+		w.Header().Set("Content-Type", "text/event-stream;charset=utf-8")
+		w.WriteHeader(status)
+		fmt.Fprint(w, payload)
+		return
+	}
 	w.WriteHeader(status)
 	if status != 204 {
 		_ = json.NewEncoder(w).Encode(payload)
@@ -170,7 +184,7 @@ func (s *Server) route(method, path, credential string, body object) (int, any, 
 			a, b := good(object{"kubeconfig": s.credential})
 			return respond(a, b)
 		case "GET /api/desktop/getInstalledApps":
-			a, b := good([]any{object{"key": "system-applaunchpad", "data": object{"url": s.BaseURL}}, object{"key": "system-dbprovider", "data": object{"url": s.BaseURL}}})
+			a, b := good([]any{object{"key": "system-applaunchpad", "data": object{"url": s.BaseURL}}, object{"key": "system-dbprovider", "data": object{"url": s.BaseURL}}, object{"key": "system-objectstorage", "data": object{"url": s.BaseURL}}})
 			return respond(a, b)
 		case "GET /api/platform/getAppConfig":
 			a, b := good(object{"desktop": object{"layout": object{"kubeconfigEnabled": false}}, "simulation": true})
@@ -182,6 +196,9 @@ func (s *Server) route(method, path, credential string, body object) (int, any, 
 	if credential != s.credential {
 		a, b := bad(401, "Invalid mock provider credential.")
 		return respond(a, b)
+	}
+	if status, payload, mutation, handled := s.observeAndStorage(method, path, body); handled {
+		return status, payload, mutation
 	}
 	if method == "GET" && strings.HasPrefix(path, "/api/getAppByAppName?") {
 		u, _ := url.Parse(path)

@@ -5,11 +5,13 @@ A small, dependency-free Go CLI and agent skill for Sealos application operation
 - Query workspaces, apps and managed databases.
 - Create apps and databases through **console APIs**, including platform-managed public HTTP/HTTPS endpoints.
 - Update an image by **container name**, preserving sidecars, environment references, probes and mounts.
+- Inspect app/database Pods, logs, events and CPU/memory history; inspect all app container usage.
+- List/create object-storage buckets and list/upload/download objects through console-managed S3 access.
 - Preview writes by default; use `--execute` to submit them.
 - Run an **in-memory local simulator** without Docker, Kubernetes, Node or Python.
 - macOS, Linux and Windows binaries for amd64 and arm64.
 
-This is an independent client, not an official Sealos project. The initial release is a preview: request contracts and local simulated writes are tested, but real deployment writes need acceptance testing against your installed Sealos components.
+This is an independent client, not an official Sealos project. This release is a preview: request contracts and local simulated writes are tested, but real deployment writes need acceptance testing against your installed Sealos components.
 
 ## Install
 
@@ -47,7 +49,7 @@ PowerShell login:
 'demo' | .\sealos-console.exe auth login --profile mock --url http://127.0.0.1:8787 --username demo --password-stdin --local-test --workspace ns-demo
 ```
 
-The simulator seeds `web` (one container) and `worker` (two containers and `fieldRef` environment variables). It supports app/database creation, image-only updates and readiness checks through the console API workflow. State is in memory; restart the server to reset it.
+The simulator seeds `web` (one container) and `worker` (two containers and `fieldRef` environment variables). It supports app/database creation, image-only updates and readiness checks through the console API workflow. It also simulates Pods, logs/events/metrics, private bucket creation, signed S3 listing and file transfers. The `archive` bucket starts with `hello.txt`. State is in memory; restart the server to reset it.
 
 Fault injection:
 
@@ -73,9 +75,9 @@ sealos-console --workspace YOUR_NAMESPACE doctor
 
 Provide the password on stdin, or through `SEALOS_PASSWORD`. Password arguments are intentionally unsupported. `SEALOS_USERNAME` is also accepted.
 
-Authentication follows Desktop's password login and regional session endpoints. The client saves **only a regional token**, URL and optional selected workspace in the OS user configuration directory. It fetches the provider's workspace-scoped kubeconfig into memory and sends it to Sealos HTTP services; it never writes a kubeconfig file or connects to Kubernetes directly. This still uses kubeconfig as the provider credential. Your organization's rules for API automation continue to apply.
+Authentication follows Desktop's password login and regional session endpoints. Login saves a regional token, URL and optional selected workspace in the OS user configuration directory. It fetches the provider's workspace-scoped kubeconfig into memory and sends it to Sealos HTTP services; it never writes a kubeconfig file or connects to Kubernetes directly. This still uses kubeconfig as the provider credential. Your organization's rules for API automation continue to apply.
 
-`SEALOS_CONSOLE_CONFIG_DIR` overrides the session directory. Files use mode 0600 on Unix; on Windows protect the directory with your user ACLs. `auth logout` removes the local profile; it does not revoke the server token.
+`SEALOS_CONSOLE_CONFIG_DIR` overrides the session directory. Files use mode 0600 on Unix; on Windows protect the directory with your user ACLs. An explicit `storage connect --execute` additionally stores S3 keys per workspace in that private profile. `auth logout` removes all local profile credentials; it does not revoke the server token or S3 keys.
 
 ## Create an app
 
@@ -160,6 +162,45 @@ Choose an exact version returned by `db engines`. The database schema uses CPU c
 
 Database edits, engine upgrades, deletion and credential retrieval are not included.
 
+## Logs and monitoring
+
+```sh
+sealos-console app pods APP
+sealos-console app logs APP --pod POD --container CONTAINER --tail 100 --since 1h
+sealos-console app logs APP --pod POD --container CONTAINER --follow --timeout 60
+sealos-console app events APP
+sealos-console app stats APP
+sealos-console app metrics APP --metric cpu --since 15m
+sealos-console db pods DB
+sealos-console db logs DB --pod POD
+sealos-console db events DB
+sealos-console db metrics DB --metric memory --since 1h
+```
+
+Logs require an explicit Pod unless there is exactly one; multi-container app logs also require a container name. Snapshots are JSON; followed logs emit JSON lines and stop after the timeout. Empty logs/series report `no-data`. App stats preserve all returned containers, report missing Pods and retain Kubernetes resource quantity units. Pod status/restarts are the console's primary-container summary. Historical metric units follow the platform; some server versions pad missing points with zeros.
+
+`--previous` reads the previous container instance. Follow mode uses the server's initial tail of up to 1000 lines regardless of `--tail`. Logs/event messages may contain application secrets and are not automatically redacted. Database connection metrics, deleted-Pod log search and alert management are outside this release. See [detailed observation behavior](skills/sealos-console/references/observe-storage.md).
+
+## Object storage
+
+```sh
+sealos-console storage buckets
+sealos-console --workspace YOUR_NAMESPACE storage connect
+sealos-console --workspace YOUR_NAMESPACE storage connect --execute
+sealos-console storage create artifacts
+sealos-console storage create artifacts --execute
+sealos-console storage ls artifacts --prefix reports/ --limit 100
+sealos-console storage upload artifacts reports/result.json --file result.json
+sealos-console storage upload artifacts reports/result.json --file result.json --execute
+sealos-console storage download artifacts reports/result.json --output downloaded.json
+```
+
+`storage connect --execute` fetches S3 credentials and **may initialize a storage user**. It stores keys in the private profile for the selected workspace, without printing them. Ordinary object reads require cached credentials and never call this initializer. Bucket listings need no S3 setup. Logout removes the local keys; reconnect explicitly after rotation.
+
+Buckets are created through the console with private access; existing names are refused. The platform creation endpoint is an upsert, so concurrent creation of the same name can still change policy between preflight and submission. File operations use the browser's S3-compatible endpoint and SigV4, with no direct Kubernetes access. Only buckets managed by the selected workspace are accepted.
+
+Uploads are a single PUT (max 1 GiB), preview by default, and refuse overwrites using `If-None-Match: *`; your S3 server must support that condition. A HEAD checks size/checksum metadata afterward. Downloads require a new path and a filesystem supporting hard links; partial files are discarded. File requests have a 30-second timeout. There is no automatic retry, multipart upload, deletion or permission editing. See [storage details and limits](skills/sealos-console/references/observe-storage.md).
+
 ## API compatibility
 
 | Operation | Console endpoint |
@@ -172,8 +213,15 @@ Database edits, engine upgrades, deletion and credential retrieval are not inclu
 | Database list / get | `GET /api/getDBList` |
 | Database engine versions | `GET /api/platform/getVersion` |
 | Database creation | `POST /api/createDB` |
+| App Pods / events | `GET /api/getAppPodsByAppName`, `GET /api/getPodEvents` |
+| App logs / instantaneous usage | `POST /api/getPodLogs`, `POST /api/getPodsMetrics` |
+| App / database CPU and memory history | `GET /api/monitor/getMonitorData` on the respective provider |
+| Database Pods / logs / events | `/api/pod/getPodsByDBName`, `/api/pod/getPodLogs`, `/api/pod/getPodEvents` |
+| Bucket list / create | `POST /api/bucket/list`, `POST /api/bucket/create` |
+| Explicit S3 setup | `GET /api/user/init` (can initialize a user) |
+| Object list / upload / download | S3 ListObjectsV2 / conditional PUT + HEAD / GET |
 
-Starting with v0.2.0, all operations use console APIs. The `--api` and `--compare` flags were removed and are rejected. Update scripts that used them. Public endpoint creation was restored through console APIs in v0.3.0.
+Starting with v0.2.0, resource management uses console APIs. Version 0.4.0 adds browser-compatible S3 file operations. The `--api` and `--compare` flags were removed and are rejected. Update scripts that used them. Public endpoint creation was restored through console APIs in v0.3.0.
 
 Desktop and providers can be upgraded independently. API versions and Next.js build IDs are not Sealos release numbers. The client targets the above endpoint family; it does not claim universal compatibility with every Sealos release or private customization. See [the compatibility notes](docs/compatibility.md).
 
@@ -187,7 +235,7 @@ The reusable skill is in [skills/sealos-console](skills/sealos-console/SKILL.md)
 go test -race ./...
 go vet ./...
 go build -trimpath -o bin/sealos-console ./cmd/sealos-console
-go run ./scripts/release.go --version v0.3.0
+go run ./scripts/release.go --version v0.4.0
 ```
 
 Tests cover console operations, an actual local HTTP simulator, multi-container preservation, Downward API references, workspace checks, business errors, redirects, conflict handling and timeout-after-commit behavior. The release builder produces six archives, a skill archive and SHA-256 checksums without embedding local source paths.

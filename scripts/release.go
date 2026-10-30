@@ -84,7 +84,7 @@ func pack(path string, files map[string]string, zipFormat bool) error {
 	return gz.Close()
 }
 func main() {
-	version := flag.String("version", "", "Release version, for example v0.3.0")
+	version := flag.String("version", "", "Release version, for example v0.4.0")
 	out := flag.String("out", "dist", "Output directory")
 	flag.Parse()
 	if !regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9.]+)?$`).MatchString(*version) {

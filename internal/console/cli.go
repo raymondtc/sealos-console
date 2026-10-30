@@ -2,7 +2,9 @@ package console
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/raymondtc/sealos-console/internal/simulator"
@@ -21,13 +23,22 @@ Usage:
   sealos-console app list | app get NAME | app domains | app wait NAME
   sealos-console app create --file app.json [--execute] [--wait 120]
   sealos-console app upgrade NAME --image IMAGE [--container NAME] [--execute]
+  sealos-console app pods|events|stats NAME
+  sealos-console app logs NAME [--pod POD] [--container NAME] [--tail 100] [--since 1h] [--follow]
+  sealos-console app metrics NAME [--metric cpu|memory] [--since 1h]
+  sealos-console db pods|events|logs|metrics NAME
+  sealos-console storage buckets | storage bucket NAME | storage connect [--execute]
+  sealos-console storage create NAME [--execute]
+  sealos-console storage ls BUCKET [--prefix PREFIX] [--limit 100] [--next-token TOKEN]
+  sealos-console storage upload BUCKET KEY --file PATH [--execute]
+  sealos-console storage download BUCKET KEY --output NEW_PATH
   sealos-console db list | db get NAME | db engines
   sealos-console db create --file database.json [--execute] [--wait 120]
 
 Common flags (may appear before or after the command):
   --profile NAME       Saved login profile (default: default)
   --workspace NS_OR_UID Exact workspace; required for creation/upgrade unless saved at login
-  --json               Output is always JSON
+  --json               Output is JSON; followed logs emit one JSON object per line
   --local-test         Login to a loopback-only mock server (never a remote host)
 
 Writes default to a read-only preview. --execute sends the mutation.
@@ -38,6 +49,9 @@ Use SEALOS_PASSWORD or --password-stdin; passwords are not accepted in command a
 type options struct {
 	profile, workspace, base, username, file, image, container string
 	listen, fault                                              string
+	pod, since, metric, prefix, nextToken, output              string
+	tail, limit                                                int
+	follow, previous                                           bool
 	passwordStdin, execute, json, help, version                bool
 	localTest                                                  bool
 	wait, timeout                                              int
@@ -47,6 +61,16 @@ func parse(args []string) (options, []string, error) {
 	var o options
 	f := flag.NewFlagSet("sealos-console", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
+	f.StringVar(&o.pod, "pod", "", "")
+	f.StringVar(&o.since, "since", "1h", "")
+	f.StringVar(&o.metric, "metric", "cpu", "")
+	f.StringVar(&o.prefix, "prefix", "", "")
+	f.StringVar(&o.nextToken, "next-token", "", "")
+	f.StringVar(&o.output, "output", "", "")
+	f.IntVar(&o.tail, "tail", 100, "")
+	f.IntVar(&o.limit, "limit", 100, "")
+	f.BoolVar(&o.follow, "follow", false, "")
+	f.BoolVar(&o.previous, "previous", false, "")
 	f.StringVar(&o.profile, "profile", "default", "")
 	f.StringVar(&o.workspace, "workspace", "", "")
 	f.StringVar(&o.base, "url", "", "")
@@ -65,7 +89,7 @@ func parse(args []string) (options, []string, error) {
 	f.BoolVar(&o.version, "version", false, "")
 	f.IntVar(&o.wait, "wait", 0, "")
 	f.IntVar(&o.timeout, "timeout", 120, "")
-	bools := map[string]bool{"password-stdin": true, "execute": true, "json": true, "help": true, "h": true, "version": true, "local-test": true}
+	bools := map[string]bool{"follow": true, "previous": true, "password-stdin": true, "execute": true, "json": true, "help": true, "h": true, "version": true, "local-test": true}
 	flags, pos := []string{}, []string{}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -132,7 +156,7 @@ func commandShape(pos []string) error {
 		return fail("INPUT", "A command is required; use --help.")
 	}
 	key := pos[0] + " " + pos[1]
-	counts := map[string]int{"auth login": 2, "auth status": 2, "auth logout": 2, "workspace list": 2, "app domains": 2, "app list": 2, "app get": 3, "app create": 2, "app upgrade": 3, "app wait": 3, "db list": 2, "db get": 3, "db engines": 2, "db create": 2}
+	counts := map[string]int{"app pods": 3, "app logs": 3, "app events": 3, "app stats": 3, "app metrics": 3, "db pods": 3, "db logs": 3, "db events": 3, "db metrics": 3, "storage connect": 2, "storage buckets": 2, "storage bucket": 3, "storage create": 3, "storage ls": 3, "storage upload": 4, "storage download": 4, "auth login": 2, "auth status": 2, "auth logout": 2, "workspace list": 2, "app domains": 2, "app list": 2, "app get": 3, "app create": 2, "app upgrade": 3, "app wait": 3, "db list": 2, "db get": 3, "db engines": 2, "db create": 2}
 	if n, ok := counts[key]; !ok || len(pos) != n {
 		return fail("INPUT", "Unknown command or incorrect positional arguments; use --help.")
 	}
@@ -203,7 +227,7 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 	}
 	defer func() {
 		if p.LocalTest {
-			if m, ok := result.(map[string]any); ok {
+			if m, ok := result.(map[string]any); ok && m != nil {
 				m["simulation"] = true
 			}
 		}
@@ -216,7 +240,7 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 		rows, e := s.Workspaces()
 		return Object{"workspaces": rows}, e
 	}
-	writing := len(pos) > 1 && (pos[1] == "create" || pos[1] == "upgrade")
+	writing := len(pos) > 1 && (pos[1] == "create" || pos[1] == "upgrade" || pos[1] == "upload" || pos[1] == "connect")
 	if err = s.Bind(o.workspace, writing); err != nil {
 		return nil, err
 	}
@@ -225,6 +249,44 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 	}
 	ops := Operations{Session: s, Namespace: s.Namespace}
 	wait := time.Duration(o.wait) * time.Second
+	if pos[0] == "storage" {
+		switch pos[1] {
+		case "buckets":
+			rows, e := ops.Buckets()
+			return Object{"namespace": s.Namespace, "items": rows}, e
+		case "bucket":
+			return ops.Bucket(pos[2])
+		case "create":
+			return ops.CreateBucket(pos[2], o.execute)
+		case "connect":
+			plan, e := s.ConnectStorage(o.execute)
+			if e == nil && o.execute {
+				p.Storage = s.Profile.Storage
+				e = profiles.Save(o.profile, p)
+			}
+			return plan, e
+		case "ls":
+			return s.ListObjects(pos[2], o.prefix, o.nextToken, o.limit)
+		case "upload":
+			return s.Upload(pos[2], pos[3], o.file, o.execute)
+		case "download":
+			return s.Download(pos[2], pos[3], o.output)
+		}
+	}
+	if pos[0] == "app" || pos[0] == "db" {
+		switch pos[1] {
+		case "pods":
+			return ops.Pods(pos[0], pos[2])
+		case "events":
+			return ops.Events(pos[0], pos[2], o.pod)
+		case "logs":
+			return ops.Logs(pos[0], pos[2], o.pod, o.container, o.since, o.tail, o.previous, o.follow, time.Duration(o.timeout)*time.Second)
+		case "metrics":
+			return ops.Metrics(pos[0], pos[2], o.metric, o.since)
+		case "stats":
+			return ops.Stats(pos[2])
+		}
+	}
 	switch pos[0] + " " + pos[1] {
 	case "app domains":
 		return ops.Domains()
@@ -290,6 +352,26 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, version strin
 	if err != nil {
 		_ = json.NewEncoder(stderr).Encode(Object{"error": publicFailure(err)})
 		return 1
+	}
+	if stream, ok := result.(*LogStream); ok {
+		defer stream.Close()
+		scanner := bufio.NewScanner(stream.Body)
+		scanner.Buffer(make([]byte, 4096), 1<<20)
+		encoder := json.NewEncoder(stdout)
+		for scanner.Scan() {
+			line := Object{"pod": stream.Pod, "container": stream.Container, "line": scanner.Text()}
+			if stream.Simulation {
+				line["simulation"] = true
+			}
+			if e := encoder.Encode(line); e != nil {
+				return 1
+			}
+		}
+		if e := scanner.Err(); e != nil && !errors.Is(e, context.DeadlineExceeded) {
+			_ = json.NewEncoder(stderr).Encode(Object{"error": Object{"code": "STREAM_ERROR", "message": "Log stream interrupted or line exceeded 1 MiB; no reconnect attempted."}})
+			return 1
+		}
+		return 0
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")

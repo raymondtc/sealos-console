@@ -1,6 +1,6 @@
 ---
 name: sealos-console
-description: Operate Sealos applications and managed databases through console APIs using the sealos-console CLI. Use for resource discovery, app/database creation, image upgrades and local API simulation; not cluster installation or direct kubectl administration.
+description: Operate Sealos applications and managed databases through console APIs using the sealos-console CLI. Use for resource discovery, app/database creation, image upgrades, logs/monitoring, object storage and local API simulation; not cluster installation or direct kubectl administration.
 ---
 
 # Sealos console operations
@@ -10,7 +10,7 @@ Use the `sealos-console` Go CLI on PATH. If absent, install a matching binary fr
 ## Select the target
 
 1. Use the profile, platform and workspace specified by the user/session. Run `auth status`, `workspace list`, and `doctor` as needed. Identify a workspace by namespace or UID; do not guess from a similar display name.
-2. Login uses `auth login --url URL --username USER --password-stdin`, or a password supplied through `SEALOS_PASSWORD`. Do not put passwords in arguments, examples, output or this skill. Profiles store regional tokens; provider kubeconfig remains in memory. This does not mean the platform API is kubeconfig-independent.
+2. Login uses `auth login --url URL --username USER --password-stdin`, or a password supplied through `SEALOS_PASSWORD`. Do not put passwords in arguments, examples, output or this skill. Profiles store regional tokens and, after explicit storage setup, workspace S3 keys; provider kubeconfig remains in memory. This does not mean the platform API is kubeconfig-independent.
 3. Use `--profile NAME --workspace NAMESPACE` explicitly for writes unless the correct workspace was saved at login. Do not use downloaded kubeconfigs, kubectl, arbitrary YAML apply or raw Kubernetes endpoints as fallback paths.
 
 ## Query and diagnose
@@ -24,6 +24,8 @@ sealos-console --profile NAME db engines
 ```
 
 Queries use the console inventory and retain applications with multiple containers or environment references. Summaries report reference kinds without exposing environment values.
+
+For observation and object storage, read [references/observe-storage.md](references/observe-storage.md). It covers log/container selection, missing metrics, S3 setup, bucket creation and file transfers. `storage connect --execute` can initialize a user; do not run it implicitly during read-only work. Preserve the user-selected scope for creation/uploads and avoid automatic retries after uncertain writes.
 
 ## Create or upgrade
 
@@ -43,7 +45,7 @@ For image upgrades, query the app first. Specify `--container` for multiple cont
 
 After authorized execution use `--wait SECONDS`, or `app wait APP`, when readiness matters. Distinguish configuration accepted/visible from rollout ready. A failed, timed-out or unverifiable write must be followed by inspection, not automatic retry or rollback.
 
-Existing app network changes, CPU/memory edits, database edits/upgrades, deletion and credential retrieval are outside this CLI's current scope. CPU/memory can be specified when creating a resource.
+Existing app network changes, CPU/memory edits, database edits/upgrades, deletion and database credential retrieval are outside this CLI's current scope. CPU/memory can be specified when creating a resource.
 
 ## Local simulation
 

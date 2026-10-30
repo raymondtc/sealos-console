@@ -163,10 +163,11 @@ func (t *Transport) Send(base, method, path, credential string, body any, envelo
 }
 
 type Profile struct {
-	URL       string `json:"url"`
-	Token     string `json:"token"`
-	Workspace string `json:"workspace,omitempty"`
-	LocalTest bool   `json:"localTest,omitempty"`
+	URL       string                       `json:"url"`
+	Token     string                       `json:"token"`
+	Workspace string                       `json:"workspace,omitempty"`
+	LocalTest bool                         `json:"localTest,omitempty"`
+	Storage   map[string]StorageCredential `json:"storage,omitempty"`
 }
 
 type Profiles struct{ Directory string }
@@ -397,7 +398,7 @@ func (s *Session) Providers() (map[string]string, error) {
 	found := map[string]string{}
 	for _, row := range rows {
 		key := str(at(row, "key"))
-		if key != "system-applaunchpad" && key != "system-dbprovider" {
+		if key != "system-applaunchpad" && key != "system-dbprovider" && key != "system-objectstorage" {
 			continue
 		}
 		base, e := originFor(str(at(row, "data", "url")), s.Profile.LocalTest)

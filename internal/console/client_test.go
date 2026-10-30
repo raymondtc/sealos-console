@@ -112,7 +112,7 @@ func TestProfileContainsOnlySessionToken(t *testing.T) {
 		t.Fatal(e)
 	}
 	loaded, e := store.Load("default")
-	if e != nil || loaded != profile {
+	if e != nil || !sameJSON(loaded, profile) {
 		t.Fatal("profile round trip failed", e)
 	}
 	b, _ := os.ReadFile(filepath.Join(store.Directory, "default.json"))
