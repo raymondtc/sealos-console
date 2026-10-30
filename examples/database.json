@@ -1,0 +1,11 @@
+{
+  "name": "demo-db",
+  "type": "postgresql",
+  "version": "postgresql-14.8.0",
+  "cpu": 1,
+  "memoryMi": 1024,
+  "storageGi": 10,
+  "replicas": 1,
+  "terminationPolicy": "Delete",
+  "backupEnabled": false
+}

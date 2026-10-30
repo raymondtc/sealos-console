@@ -1,0 +1,6 @@
+.local/
+bin/
+dist/
+coverage.out
+*.test
+*.exe

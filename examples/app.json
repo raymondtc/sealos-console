@@ -1,0 +1,9 @@
+{
+  "name": "demo-app",
+  "image": "nginx:1.27.5",
+  "cpu": 0.5,
+  "memoryMi": 512,
+  "replicas": 1,
+  "ports": [{"number": 80, "public": false}],
+  "env": [{"name": "MODE", "value": "demo"}]
+}
