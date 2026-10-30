@@ -18,6 +18,7 @@ Use the `sealos-console` Go CLI on PATH. If absent, install a matching binary fr
 ```sh
 sealos-console --profile NAME app list
 sealos-console --profile NAME app get APP
+sealos-console --profile NAME app domains
 sealos-console --profile NAME db list
 sealos-console --profile NAME db engines
 ```
@@ -36,11 +37,13 @@ sealos-console --profile NAME --workspace NAMESPACE db create --file database.js
 sealos-console --profile NAME --workspace NAMESPACE app upgrade APP --container CONTAINER --image IMAGE
 ```
 
+For a new public HTTP endpoint, set `ports[].public=true`. Use `app domains` for available platform domains; `ports[].domain` optionally selects one. Preview URLs are not reserved and change when execution generates fresh prefixes. Report URLs from the executed result; routing read-back and workload readiness do not establish external reachability. Custom domains and public TCP/UDP forwarding are not implemented.
+
 For image upgrades, query the app first. Specify `--container` for multiple containers. Image upgrades preserve original arrays and unknown fields. Never drop `fieldRef`, sidecars, probes or mounts to make a schema accept the workload.
 
 After authorized execution use `--wait SECONDS`, or `app wait APP`, when readiness matters. Distinguish configuration accepted/visible from rollout ready. A failed, timed-out or unverifiable write must be followed by inspection, not automatic retry or rollback.
 
-Public endpoint creation, CPU/memory edits, database edits/upgrades, deletion and credential retrieval are outside this CLI's current scope. CPU/memory can be specified when creating a resource.
+Existing app network changes, CPU/memory edits, database edits/upgrades, deletion and credential retrieval are outside this CLI's current scope. CPU/memory can be specified when creating a resource.
 
 ## Local simulation
 

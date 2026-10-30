@@ -84,7 +84,7 @@ func pack(path string, files map[string]string, zipFormat bool) error {
 	return gz.Close()
 }
 func main() {
-	version := flag.String("version", "", "Release version, for example v0.1.0")
+	version := flag.String("version", "", "Release version, for example v0.3.0")
 	out := flag.String("out", "dist", "Output directory")
 	flag.Parse()
 	if !regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9.]+)?$`).MatchString(*version) {
@@ -115,7 +115,7 @@ func main() {
 			cmd.Stderr = os.Stderr
 			must(cmd.Run())
 			archive := fmt.Sprintf("sealos-console_%s_%s_%s%s", *version, goos, arch, ext)
-			must(pack(filepath.Join(*out, archive), map[string]string{binary: target, "LICENSE": "LICENSE", "README.md": "README.md", "examples/app.json": "examples/app.json", "examples/database.json": "examples/database.json"}, goos == "windows"))
+			must(pack(filepath.Join(*out, archive), map[string]string{binary: target, "LICENSE": "LICENSE", "README.md": "README.md", "examples/app.json": "examples/app.json", "examples/database.json": "examples/database.json", "examples/app-public.json": "examples/app-public.json"}, goos == "windows"))
 			fmt.Println(archive)
 		}
 	}

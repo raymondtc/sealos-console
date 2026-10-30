@@ -71,7 +71,11 @@ func (o Operations) App(appName string) (Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := Object{"source": "console", "app": AppSummary(w)}
+	networks, err := o.Networks(appName)
+	if err != nil {
+		return nil, err
+	}
+	out := Object{"source": "console", "app": AppSummary(w), "networks": networks}
 	return out, nil
 }
 func publicFailure(err error) *Failure {
@@ -131,7 +135,7 @@ func (o Operations) Engines() (Object, error) {
 }
 
 func (o Operations) CreateApp(raw Object, execute bool, wait time.Duration) (Object, error) {
-	s, body, err := AppCreate(raw)
+	s, err := normalizeApp(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -146,14 +150,22 @@ func (o Operations) CreateApp(raw Object, execute bool, wait time.Duration) (Obj
 		}
 	}
 	probe, path := "/api/platform/getInitData", "/api/applyApp"
-	if _, err = o.call("applaunchpad", "GET", probe, nil, true); err != nil {
+	platform, err := o.call("applaunchpad", "GET", probe, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	s, body, err := AppCreate(s, obj(platform))
+	if err != nil {
 		return nil, err
 	}
 	envNames := []any{}
 	for _, e := range arr(s["env"]) {
 		envNames = append(envNames, at(e, "name"))
 	}
-	plan := Object{"operation": "app.create", "api": "console", "method": "POST", "path": path, "namespace": o.Namespace, "name": n, "image": s["image"], "cpu": s["cpu"], "memoryMi": s["memoryMi"], "replicas": s["replicas"], "ports": s["ports"], "storage": s["storage"], "environmentNames": envNames, "executed": false}
+	plan := Object{"operation": "app.create", "api": "console", "method": "POST", "path": path, "namespace": o.Namespace, "name": n, "image": s["image"], "cpu": s["cpu"], "memoryMi": s["memoryMi"], "replicas": s["replicas"], "ports": s["ports"], "storage": s["storage"], "environmentNames": envNames, "publicEndpoints": s["publicEndpoints"], "executed": false}
+	if len(arr(s["publicEndpoints"])) > 0 {
+		plan["publicEndpointNote"] = "Generated for this invocation; preview does not reserve a domain. Execution generates new prefixes."
+	}
 	if !execute {
 		return plan, nil
 	}
@@ -173,6 +185,14 @@ func (o Operations) CreateApp(raw Object, execute bool, wait time.Duration) (Obj
 		return nil, fail("WRITE_UNVERIFIED", "Create was accepted but console read-back failed. Inspect the app before retrying; no rollback sent.")
 	}
 	plan["executed"] = true
+	if endpoints := arr(s["publicEndpoints"]); len(endpoints) > 0 {
+		networks, err := o.Networks(n)
+		if err != nil || !verifyPublicEndpoints(endpoints, networks) {
+			return nil, fail("WRITE_UNVERIFIED", "Create was accepted but public routing could not be verified in the console. Resources may already exist; inspect before retrying. No rollback sent.")
+		}
+		plan["publicRoutingVerified"] = true
+		plan["publicReachability"] = "not-tested; DNS, TLS and external HTTP reachability are not checked"
+	}
 	plan["state"] = "created-and-visible"
 	plan["app"] = AppSummary(w)
 	if wait > 0 {

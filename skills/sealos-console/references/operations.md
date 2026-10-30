@@ -20,9 +20,11 @@ Example JSON:
 
 Optional fields: `command` and `args` as string arrays; `storage` as objects with `name`, absolute `path`, integer `sizeGi`; `imagePullSecret` names an existing pull secret. Image tags/digests must be explicit. Names start with a lowercase letter and are DNS labels of at most 63 characters.
 
-Console creation supports private TCP ports, persistent storage and Kubernetes fieldRef/configMapKeyRef/secretKeyRef environment references. It generates platform-managed Deployment/StatefulSet and Service resources and submits them through `/api/applyApp`; it is not an arbitrary YAML channel.
+Console creation supports private TCP ports, persistent storage and Kubernetes fieldRef/configMapKeyRef/secretKeyRef environment references. It generates platform-managed Deployment/StatefulSet, Service and optional Ingress resources and submits them through `/api/applyApp`; it is not an arbitrary YAML channel.
 
-Public endpoint creation (`ports[].public=true`), inline registry credentials, GPU settings, custom ingress rules and configuration-file mounts are not implemented. Public-port requests fail explicitly; use the Sealos console to configure public access.
+Set `ports[].public=true` to create a public HTTP endpoint with a random subdomain. `app domains` lists advertised domains; optional `ports[].domain` must select one of them. The CLI reads the platform HTTPS setting and certificate mapping, then creates the Ingress through the same `/api/applyApp` submission. Preview and execution generate different prefixes; use `publicEndpoints[].url` from execution.
+
+After creation the CLI checks network read-back through `/api/getAppByAppName`; `publicRoutingVerified` does not verify DNS, certificate validity or external reachability. A failed submission can leave partial resources. Inspect first; do not repeat creation automatically. Existing app network edits, custom domains/prefixes, public TCP/UDP forwarding, inline registry credentials, GPU settings, custom ingress rules and configuration-file mounts are not implemented.
 
 ## Database creation
 

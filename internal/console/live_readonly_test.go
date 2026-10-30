@@ -35,12 +35,18 @@ func TestLiveReadOnlyConsoleEndpoints(t *testing.T) {
 		"/api/platform/getInitData":     true,
 		"/api/platform/getVersion":      true,
 		"/api/getApps":                  true,
+		"/api/getAppByAppName":          true,
 		"/api/getDBList":                true,
 	}
 	requests := map[string]int{}
 	tr := NewTransport()
 	tr.Client.Transport = roundTripper(func(r *http.Request) (*http.Response, error) {
-		if r.Method != http.MethodGet || !allowed[r.URL.Path] || r.URL.RawQuery != "" {
+		validQuery := r.URL.RawQuery == ""
+		if r.URL.Path == "/api/getAppByAppName" {
+			q := r.URL.Query()
+			validQuery = len(q) == 1 && len(q["appName"]) == 1 && validName(q.Get("appName")) == nil
+		}
+		if r.Method != http.MethodGet || !allowed[r.URL.Path] || !validQuery {
 			return nil, fmt.Errorf("request outside read-only allowlist")
 		}
 		requests[r.Method+" "+r.URL.Path]++
@@ -63,11 +69,16 @@ func TestLiveReadOnlyConsoleEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal("app list failed:", publicFailure(err).Code)
 	}
-	complexApps, references := 0, 0
+	complexApps, references, publicNetworks := 0, 0, 0
 	for _, row := range arr(apps["items"]) {
 		app, e := o.App(str(at(row, "name")))
 		if e != nil {
 			t.Fatal("app get failed:", publicFailure(e).Code)
+		}
+		for _, network := range arr(app["networks"]) {
+			if at(network, "openPublicDomain") == true {
+				publicNetworks++
+			}
 		}
 		if at(app, "app", "multiContainer") == true {
 			complexApps++
@@ -86,6 +97,21 @@ func TestLiveReadOnlyConsoleEndpoints(t *testing.T) {
 			t.Fatal("database get failed:", publicFailure(e).Code)
 		}
 	}
+	t.Logf("existing public networks read: %d", publicNetworks)
+	domains, err := o.Domains()
+	if err != nil {
+		t.Fatal("public domain discovery failed:", publicFailure(err).Code)
+	}
+	t.Logf("platform domain choices: %d; HTTPS: %v", len(domains["domains"].([]string)), domains["https"])
+	preview := Object{"name": "console-readonly-public-preview", "image": "nginx:1.27.5", "cpu": 0.5, "memoryMi": 512, "ports": []any{Object{"number": 8080, "public": true}}}
+	plan, err := o.CreateApp(preview, false, 0)
+	if err != nil {
+		t.Fatal("public creation preview failed:", publicFailure(err).Code)
+	}
+	if plan["executed"] != false || len(arr(plan["publicEndpoints"])) != 1 {
+		t.Fatal("invalid public creation preview")
+	}
+	t.Log("public creation preview passed; no resources submitted")
 	t.Logf("database list/get: %d databases", len(dbs))
 	engines, err := o.Engines()
 	if err != nil {

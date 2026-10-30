@@ -120,7 +120,7 @@ func appConfig() Object {
 	return Object{"name": "demo", "image": "nginx:1.27.5", "cpu": .5, "memoryMi": float64(512), "ports": []any{Object{"number": float64(8080)}}}
 }
 func TestAppCreateContracts(t *testing.T) {
-	s, body, err := AppCreate(appConfig())
+	s, body, err := AppCreate(appConfig(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,23 +146,23 @@ func TestAppCreateContracts(t *testing.T) {
 func TestCreateRejectsUnsupportedOrUnknownInput(t *testing.T) {
 	c := appConfig()
 	c["arbitraryKubernetesObject"] = Object{}
-	if _, _, e := AppCreate(c); e == nil {
+	if _, _, e := AppCreate(c, nil); e == nil {
 		t.Fatal("unknown field allowed")
 	}
 	c = appConfig()
 	c["replicas"] = float64(0)
-	if _, _, e := AppCreate(c); e == nil {
+	if _, _, e := AppCreate(c, nil); e == nil {
 		t.Fatal("zero replicas silently defaulted")
 	}
 	c = appConfig()
 	c["env"] = []any{Object{"name": "POD_IP", "valueFrom": Object{"fieldRef": Object{"fieldPath": "status.podIP"}}}}
-	if _, _, e := AppCreate(c); e != nil {
+	if _, _, e := AppCreate(c, nil); e != nil {
 		t.Fatal(e)
 	}
 	c = appConfig()
 	obj(arr(c["ports"])[0])["public"] = true
-	if _, _, e := AppCreate(c); e == nil {
-		t.Fatal("public port must not silently become private")
+	if _, _, e := AppCreate(c, nil); e == nil {
+		t.Fatal("public port without platform settings must fail")
 	}
 }
 func dbConfig() Object {

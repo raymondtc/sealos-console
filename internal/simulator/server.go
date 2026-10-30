@@ -54,13 +54,15 @@ type Server struct {
 	Delay             time.Duration
 	apps              map[string]object
 	dbs               map[string]object
+	networks          map[string][]any
+	DisableHTTPS      bool
 	version           int
 	token, credential string
 }
 
 func New(baseURL, fault string) *Server {
 	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"workspaceId":"ns-demo","workspaceUid":"00000000-0000-4000-8000-000000000001"}`))
-	s := &Server{BaseURL: baseURL, Fault: fault, Delay: 35 * time.Second, apps: map[string]object{}, dbs: map[string]object{}, version: 1,
+	s := &Server{BaseURL: baseURL, Fault: fault, Delay: 35 * time.Second, apps: map[string]object{}, dbs: map[string]object{}, networks: map[string][]any{}, version: 1,
 		token: "mock." + payload + ".not-a-real-signature", credential: "apiVersion: v1\ncontexts:\n- context:\n    namespace: ns-demo\n  name: mock\ncurrent-context: mock\n"}
 	s.apps["web"] = s.newApp("web", "nginx:1.27.4", 1)
 	worker := s.newApp("worker", "busybox:1.36.0", 1)
@@ -122,7 +124,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	credential, _ := url.QueryUnescape(r.Header.Get("Authorization"))
 	s.mu.Lock()
-	status, payload, mutation := s.route(r.Method, r.URL.Path, credential, body)
+	status, payload, mutation := s.route(r.Method, r.URL.RequestURI(), credential, body)
 	payload = copyJSON(payload)
 	delay := s.Delay
 	fault := s.Fault
@@ -181,13 +183,27 @@ func (s *Server) route(method, path, credential string, body object) (int, any, 
 		a, b := bad(401, "Invalid mock provider credential.")
 		return respond(a, b)
 	}
+	if method == "GET" && strings.HasPrefix(path, "/api/getAppByAppName?") {
+		u, _ := url.Parse(path)
+		name := u.Query().Get("appName")
+		if _, exists := s.apps[name]; !exists {
+			a, b := bad(404, "App not found.")
+			return respond(a, b)
+		}
+		networks := s.networks[name]
+		if networks == nil {
+			networks = []any{}
+		}
+		a, b := good(object{"appName": name, "networks": networks, "envs": []any{object{"key": "PASSWORD", "value": "SIMULATED_PRIVATE_VALUE"}}})
+		return respond(a, b)
+	}
 	if method == "GET" {
 		switch path {
 		case "/api/getApps":
 			a, b := good(s.sortedApps())
 			return respond(a, b)
 		case "/api/platform/getInitData":
-			a, b := good(object{"simulation": true})
+			a, b := good(object{"SEALOS_DOMAIN": "apps.example.test", "SEALOS_USER_DOMAINS": []any{object{"name": "alt.example.test", "secretName": "alternate-cert"}}, "DISABLE_HTTPS": s.DisableHTTPS, "DOMAIN_PORT": "", "HTTP_PORT": ""})
 			return respond(a, b)
 		case "/api/getDBList":
 			out := []any{}
@@ -206,7 +222,8 @@ func (s *Server) route(method, path, credential string, body object) (int, any, 
 			a, b := bad(400, "Only create mode is simulated.")
 			return respond(a, b)
 		}
-		var work object
+		var work, service object
+		ingresses := []object{}
 		for _, raw := range list(body["yamlList"]) {
 			var resource object
 			if json.Unmarshal([]byte(text(raw)), &resource) != nil {
@@ -220,7 +237,15 @@ func (s *Server) route(method, path, credential string, body object) (int, any, 
 					return respond(a, b)
 				}
 				work = resource
-			} else if kind != "Service" {
+			} else if kind == "Service" {
+				if service != nil {
+					a, b := bad(400, "One service per mock creation.")
+					return respond(a, b)
+				}
+				service = resource
+			} else if kind == "Ingress" {
+				ingresses = append(ingresses, resource)
+			} else {
 				a, b := bad(400, "Unsupported mock resource.")
 				return respond(a, b)
 			}
@@ -234,6 +259,12 @@ func (s *Server) route(method, path, credential string, body object) (int, any, 
 			a, b := bad(409, "Already exists.")
 			return respond(a, b)
 		}
+		networks, err := s.creationNetworks(n, service, ingresses)
+		if err != nil {
+			a, b := bad(400, "Invalid public routing contract.")
+			return respond(a, b)
+		}
+		s.networks[n] = networks
 		s.markReady(work)
 		s.apps[n] = work
 		a, b := good([]any{work["kind"]})

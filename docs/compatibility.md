@@ -6,11 +6,19 @@ Reference implementation used to understand the API contracts: [labring/sealos v
 
 ## Console-only operations
 
-Version 0.2.0 removes the OpenAPI adapter and the `--api` / `--compare` flags. Remove those flags from existing scripts. Public endpoint creation is unsupported; configure it in the Sealos console.
+Version 0.2.0 removes the OpenAPI adapter and the `--api` / `--compare` flags. Remove those flags from existing scripts. Version 0.3.0 adds platform-managed public HTTP/HTTPS endpoint creation through console APIs.
 
 App summaries are read from the console workload list, including multi-container apps and environment references such as `fieldRef` and `configMapKeyRef`. The reduced schemas of some historical OpenAPI versions could not represent these workloads and silently omitted apps from list responses. The CLI no longer calls those endpoints.
 
 Database engine versions use `/api/platform/getVersion`, the same catalog endpoint used by the console. Some server versions return a static fallback catalog if the backend query fails, so a successful catalog read alone does not establish that an engine can be provisioned.
+
+## Public endpoint creation
+
+The console's [ingress generator](https://github.com/labring/sealos/blob/v5.1.2-rc6/frontend/providers/applaunchpad/src/utils/deployYaml2Json.ts) builds an Ingress for each public HTTP port. The CLI follows its manager/domain/port labels, nginx annotations, root Prefix route and platform certificate mapping. Configuration comes from `/api/platform/getInitData`; resources are submitted together through `/api/applyApp`. This client supports HTTP backends and platform-managed domains, not custom domains, prefixes or arbitrary ingress resources.
+
+Each invocation generates fresh random domain prefixes, including previews. Nothing is reserved before execution. The creation response exposes the generated URLs, and network read-back checks their domain, backend Service and port through `/api/getAppByAppName`. This adapted detail response does not establish the actual TLS resource, certificate validity, DNS or external reachability. App inventory and image preservation continue to use raw console workloads. Detail responses are projected to network fields so environment values are not exposed.
+
+Server creation can partially succeed before a dependent resource fails. The CLI does not retry, recreate, or roll back on failure. Inspect existing resources before attempting recovery. Server versions determine ingress admission, owner references and domain collision behavior; an isolated real write acceptance test remains necessary for a new build.
 
 ## Image preservation
 
@@ -23,7 +31,7 @@ The supported client request is narrow, but the actual server implementation sti
 `mock serve` uses only memory and a loopback HTTP listener. It independently validates the expected request envelopes and simulates:
 
 - Desktop login/workspace/provider discovery;
-- console app/database creation;
+- console app/database creation, including public Ingress/Service association and TLS settings;
 - a single-container app and a multi-container app with `fieldRef`;
 - resourceVersion conflicts and image-only merge semantics;
 - an accepted mutation followed by a client timeout.

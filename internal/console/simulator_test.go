@@ -49,6 +49,10 @@ func TestCLIEndToEndAgainstLocalHTTP(t *testing.T) {
 		return result
 	}
 	invoke("demo\n", "auth", "login", "--url", base, "--username", "demo", "--password-stdin", "--workspace", "ns-demo", "--local-test")
+	domains := invoke("", "app", "domains")
+	if domains["defaultDomain"] != "apps.example.test" {
+		t.Fatal("CLI domain discovery failed")
+	}
 	list := invoke("", "app", "list")
 	if list["simulation"] != true || len(arr(list["items"])) != 2 {
 		t.Fatal("simulation flag or complete inventory missing")
@@ -60,6 +64,7 @@ func TestCLIEndToEndAgainstLocalHTTP(t *testing.T) {
 	for _, name := range []string{"created-app", "created-stateful"} {
 		config := appConfig()
 		config["name"] = name
+		obj(arr(config["ports"])[0])["public"] = true
 		if name == "created-stateful" {
 			config["storage"] = []any{Object{"name": "data", "path": "/data", "sizeGi": float64(1)}}
 		}
@@ -71,6 +76,13 @@ func TestCLIEndToEndAgainstLocalHTTP(t *testing.T) {
 		created := invoke(string(b), "app", "create", "--file", "-", "--execute", "--wait", "1")
 		if created["simulation"] != true || created["state"] != "created-and-visible" {
 			t.Fatal("creation not observed")
+		}
+		if created["publicRoutingVerified"] != true {
+			t.Fatal("public routing not verified")
+		}
+		details := invoke("", "app", "get", name)
+		if len(arr(details["networks"])) != 1 {
+			t.Fatal("CLI network details missing")
 		}
 		db := dbConfig()
 		db["name"] = "db-" + name

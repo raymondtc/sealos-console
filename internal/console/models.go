@@ -125,7 +125,7 @@ func normalizeApp(raw Object) (Object, error) {
 		if !ok {
 			return nil, fail("INPUT", "Each port must be an object.")
 		}
-		if e := checkFields(p, []string{"number", "public"}, []string{"number"}); e != nil {
+		if e := checkFields(p, []string{"number", "public", "domain"}, []string{"number"}); e != nil {
 			return nil, e
 		}
 		if e := numeric(p["number"], "port", 1, 65535, true); e != nil {
@@ -141,6 +141,14 @@ func normalizeApp(raw Object) (Object, error) {
 		}
 		if _, ok := p["public"].(bool); !ok {
 			return nil, fail("INPUT", "port.public must be boolean.")
+		}
+		if v, exists := p["domain"]; exists {
+			domain, ok := v.(string)
+			domain = normalizeDomain(domain)
+			if !ok || p["public"] != true || !dnsName(domain) || !strings.Contains(domain, ".") {
+				return nil, fail("INPUT", "port.domain requires a public port and a valid platform domain.")
+			}
+			p["domain"] = domain
 		}
 	}
 	envNames := map[string]bool{}
@@ -233,24 +241,28 @@ func normalizeApp(raw Object) (Object, error) {
 
 // AppCreate builds the console's generated resource list.
 // It accepts a constrained app schema, not arbitrary Kubernetes YAML.
-func AppCreate(raw Object) (Object, Object, error) {
+func AppCreate(raw Object, platform Object) (Object, Object, error) {
 	s, err := normalizeApp(raw)
 	if err != nil {
 		return nil, nil, err
 	}
 	n, image := str(s["name"]), str(s["image"])
 	ports, env, storage := arr(s["ports"]), arr(s["env"]), arr(s["storage"])
-	for _, p := range ports {
-		if at(p, "public") == true {
-			return nil, nil, fail("UNSUPPORTED", "Public port creation is not supported; use private ports or configure the public endpoint in the Sealos console.")
-		}
+	ingress, endpoints, err := appPublicResources(s, platform)
+	if err != nil {
+		return nil, nil, err
 	}
+	s["publicEndpoints"] = endpoints
 	cpu, memory := int(math.Round(num(s["cpu"])*1000)), int(num(s["memoryMi"]))
 	containerPorts, servicePorts, mounts, claims := []any{}, []any{}, []any{}, []any{}
 	for _, p := range ports {
 		port := int(num(at(p, "number")))
 		containerPorts = append(containerPorts, Object{"name": fmt.Sprintf("tcp-%d", port), "containerPort": port})
-		servicePorts = append(servicePorts, Object{"name": fmt.Sprintf("tcp-%d", port), "port": port, "targetPort": port, "protocol": "TCP"})
+		servicePort := Object{"name": fmt.Sprintf("tcp-%d", port), "port": port, "targetPort": port, "protocol": "TCP"}
+		if at(p, "public") == true {
+			servicePort["appProtocol"] = "http"
+		}
+		servicePorts = append(servicePorts, servicePort)
 	}
 	total := 0
 	for _, v := range storage {
@@ -285,6 +297,7 @@ func AppCreate(raw Object) (Object, Object, error) {
 	if len(ports) > 0 {
 		resources = append(resources, Object{"apiVersion": "v1", "kind": "Service", "metadata": Object{"name": n, "labels": Object{ManagerLabel: n}}, "spec": Object{"selector": Object{"app": n}, "ports": servicePorts}})
 	}
+	resources = append(resources, ingress...)
 	yamls := []any{}
 	for _, r := range resources {
 		b, _ := json.Marshal(r)

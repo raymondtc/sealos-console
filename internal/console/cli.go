@@ -18,7 +18,7 @@ Usage:
   sealos-console mock serve [--listen 127.0.0.1:8787] [--fault conflict|timeout-after-write]
   sealos-console auth login --url https://cloud.example.com --username USER --password-stdin
   sealos-console auth status | auth logout | workspace list | doctor
-  sealos-console app list | app get NAME | app wait NAME
+  sealos-console app list | app get NAME | app domains | app wait NAME
   sealos-console app create --file app.json [--execute] [--wait 120]
   sealos-console app upgrade NAME --image IMAGE [--container NAME] [--execute]
   sealos-console db list | db get NAME | db engines
@@ -132,7 +132,7 @@ func commandShape(pos []string) error {
 		return fail("INPUT", "A command is required; use --help.")
 	}
 	key := pos[0] + " " + pos[1]
-	counts := map[string]int{"auth login": 2, "auth status": 2, "auth logout": 2, "workspace list": 2, "app list": 2, "app get": 3, "app create": 2, "app upgrade": 3, "app wait": 3, "db list": 2, "db get": 3, "db engines": 2, "db create": 2}
+	counts := map[string]int{"auth login": 2, "auth status": 2, "auth logout": 2, "workspace list": 2, "app domains": 2, "app list": 2, "app get": 3, "app create": 2, "app upgrade": 3, "app wait": 3, "db list": 2, "db get": 3, "db engines": 2, "db create": 2}
 	if n, ok := counts[key]; !ok || len(pos) != n {
 		return fail("INPUT", "Unknown command or incorrect positional arguments; use --help.")
 	}
@@ -226,6 +226,8 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 	ops := Operations{Session: s, Namespace: s.Namespace}
 	wait := time.Duration(o.wait) * time.Second
 	switch pos[0] + " " + pos[1] {
+	case "app domains":
+		return ops.Domains()
 	case "app list":
 		return ops.Apps()
 	case "app get":

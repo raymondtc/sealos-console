@@ -3,7 +3,7 @@
 A small, dependency-free Go CLI and agent skill for Sealos application operations.
 
 - Query workspaces, apps and managed databases.
-- Create apps and databases through **console APIs**.
+- Create apps and databases through **console APIs**, including platform-managed public HTTP/HTTPS endpoints.
 - Update an image by **container name**, preserving sidecars, environment references, probes and mounts.
 - Preview writes by default; use `--execute` to submit them.
 - Run an **in-memory local simulator** without Docker, Kubernetes, Node or Python.
@@ -107,10 +107,27 @@ Existing names are rejected, never replaced. Creation CPU/memory settings are su
 
 Supported app fields: `name`, `image`, `cpu` (cores), `memoryMi`, `replicas`, `ports`, `env`, `command` / `args` (string arrays), `storage` (`name`, absolute `path`, integer `sizeGi`), and an existing `imagePullSecret` name. Unknown fields are rejected.
 
-- Console creation generates only managed Deployment/StatefulSet and Service resources. It supports internal TCP ports, persistent storage and `fieldRef` / `configMapKeyRef` / `secretKeyRef` env references. Arbitrary YAML is not accepted.
-- Public endpoint creation (`"public": true`) is not supported. Such requests are rejected; configure public access in the Sealos console.
+- Console creation generates managed Deployment/StatefulSet, Service and optional Ingress resources. It supports internal TCP ports, persistent storage and `fieldRef` / `configMapKeyRef` / `secretKeyRef` env references. Arbitrary YAML is not accepted.
+- Public HTTP endpoints (`"public": true`) use the platform's advertised domain and HTTPS setting. `domain` optionally selects another domain returned by `app domains`. Custom domains and prefixes are not accepted.
 - Inline registry credentials, arbitrary ingress rules, GPU settings and configuration-file mounts are not implemented in this preview.
 - Preview is a local operation plan plus read-only checks, not a server-side dry run or reservation.
+
+## Create an app with public access
+
+```sh
+sealos-console --workspace YOUR_NAMESPACE app domains
+sealos-console --workspace YOUR_NAMESPACE app create --file examples/app-public.json
+sealos-console --workspace YOUR_NAMESPACE app create --file examples/app-public.json --execute --wait 120
+sealos-console --workspace YOUR_NAMESPACE app get demo-public
+```
+
+Set `"ports": [{"number": 80, "public": true}]` in the application JSON. The port must serve HTTP. The client reads `/api/platform/getInitData`, generates a random subdomain per public port, and submits the managed Ingress with the workload and Service through `/api/applyApp`. HTTPS uses the domain's configured certificate reference, falling back to the console's `wildcard-cert` convention. HTTP-only platforms omit TLS. No certificate or DNS records are created by the CLI.
+
+To choose another advertised domain, add `"domain": "apps.example.com"` to that public port, using an actual value from `app domains`. Leaving it out selects the platform default. Mixed public and private ports are supported.
+
+Plans and creation results include `publicEndpoints` with URLs. **A preview does not reserve a domain.** Each invocation generates fresh prefixes; use the URLs returned by the executed command. The client reads back `/api/getAppByAppName` and checks each public port's domain, Service and route. Missing or mismatched routing returns `WRITE_UNVERIFIED`; resources may already exist, so inspect them instead of blindly rerunning creation. `app get` returns network information without exposing the detail endpoint's environment values.
+
+`publicRoutingVerified` means the console reports the expected routing configuration. It does not prove DNS, certificate delivery, external HTTP reachability or controller readiness; `--wait` checks only workload readiness. Existing app network edits, custom domains/prefixes, TCP/UDP public forwarding, and custom ingress routes are outside this release.
 
 ## Upgrade an image
 
@@ -147,14 +164,16 @@ Database edits, engine upgrades, deletion and credential retrieval are not inclu
 
 | Operation | Console endpoint |
 | --- | --- |
-| App list / get / readiness | `GET /api/getApps` |
+| App list / workload / readiness | `GET /api/getApps` |
+| App network details | `GET /api/getAppByAppName?appName=NAME` |
+| Public domains / creation metadata | `GET /api/platform/getInitData` |
 | App creation | `POST /api/applyApp` |
 | Image upgrade | `POST /api/updateApp` |
 | Database list / get | `GET /api/getDBList` |
 | Database engine versions | `GET /api/platform/getVersion` |
 | Database creation | `POST /api/createDB` |
 
-Starting with v0.2.0, all operations use console APIs. The `--api` and `--compare` flags were removed and are rejected. Update scripts that used them. Public endpoint creation is no longer available in the CLI.
+Starting with v0.2.0, all operations use console APIs. The `--api` and `--compare` flags were removed and are rejected. Update scripts that used them. Public endpoint creation was restored through console APIs in v0.3.0.
 
 Desktop and providers can be upgraded independently. API versions and Next.js build IDs are not Sealos release numbers. The client targets the above endpoint family; it does not claim universal compatibility with every Sealos release or private customization. See [the compatibility notes](docs/compatibility.md).
 
@@ -168,7 +187,7 @@ The reusable skill is in [skills/sealos-console](skills/sealos-console/SKILL.md)
 go test -race ./...
 go vet ./...
 go build -trimpath -o bin/sealos-console ./cmd/sealos-console
-go run ./scripts/release.go --version v0.2.0
+go run ./scripts/release.go --version v0.3.0
 ```
 
 Tests cover console operations, an actual local HTTP simulator, multi-container preservation, Downward API references, workspace checks, business errors, redirects, conflict handling and timeout-after-commit behavior. The release builder produces six archives, a skill archive and SHA-256 checksums without embedding local source paths.
@@ -183,4 +202,4 @@ After logging in to the desired workspace, run:
 SEALOS_CONSOLE_READONLY_PROFILE=YOUR_PROFILE go test ./internal/console -run '^TestLiveReadOnlyConsoleEndpoints$' -v -count=1
 ```
 
-This test is skipped unless the profile environment variable is set. It uses the saved session and rejects all requests except an explicit GET allowlist, including rejecting workspace switches. Use a profile bound to its current workspace. It reads inventories and each app/database summary, checks doctor and creation metadata, and reports only counts and endpoint paths. It does not submit creates, upgrades or deletes. A database version response reflects the console's catalog; some server versions may return a fallback catalog on backend failure.
+This test is skipped unless the profile environment variable is set. It uses the saved session and rejects all requests except an explicit GET allowlist, including rejecting workspace switches. Use a profile bound to its current workspace. It reads inventories and each app/database summary, checks doctor, public domains, existing network details and public creation previews, and reports only counts and endpoint paths. It does not submit creates, upgrades or deletes. A database version response reflects the console's catalog; some server versions may return a fallback catalog on backend failure.
