@@ -30,12 +30,12 @@ Windows PowerShell:
 
 ```powershell
 Invoke-WebRequest https://raw.githubusercontent.com/raymondtc/sealos-console/main/install.ps1 -OutFile install-sealos-console.ps1
-.\install-sealos-console.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-sealos-console.ps1
 # Add the default install directory for this session:
 $env:Path = "$env:LOCALAPPDATA\sealos-console\bin;$env:Path"
 ```
 
-The scripts default to their associated release, including prereleases. Rerun the current script to upgrade. Select a release/directory with `--version v0.5.0 --install-dir DIR`, or PowerShell `-Version v0.5.0 -InstallDir DIR`. They do not edit shell startup files or login profiles. Inspect the downloaded script before running it; tagged scripts are also available in [Releases](https://github.com/raymondtc/sealos-console/releases).
+The Windows example applies its execution-policy option only to that process. The scripts default to their associated release, including prereleases. Rerun the current script to upgrade. Select a release/directory with `--version v0.5.0 --install-dir DIR`, or PowerShell `-Version v0.5.0 -InstallDir DIR`. They do not edit shell startup files or login profiles. Inspect the downloaded script before running it; tagged scripts are also available in [Releases](https://github.com/raymondtc/sealos-console/releases).
 
 Manual archives remain available for macOS/Linux/Windows amd64 and arm64. Developers can alternatively build with Go 1.23+:
 
