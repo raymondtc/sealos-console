@@ -31,7 +31,11 @@ try {
     $checksumRows = @(Get-Content -LiteralPath $checksums | Where-Object { ($_ -split '\s+', 2)[1] -ceq $asset })
     if ($checksumRows.Count -ne 1) { throw 'Missing or duplicate checksum entry.' }
     $expected = ($checksumRows[0] -split '\s+', 2)[0]
-    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expected) { throw 'Checksum mismatch; existing installation was not changed.' }
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($archive)
+    try { $actual = [System.BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
+    finally { $stream.Dispose(); $hasher.Dispose() }
+    if ($actual -cne $expected) { throw 'Checksum mismatch; existing installation was not changed.' }
     # Extract only the executable to avoid arbitrary archive paths.
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
@@ -51,7 +55,11 @@ try {
     }
     $staged = Join-Path $InstallDir ('.sealos-console-' + [guid]::NewGuid() + '.exe')
     [System.IO.File]::Copy($binary, $staged)
-    if ([System.IO.File]::Exists($destination)) { [System.IO.File]::Replace($staged, $destination, $null) }
+    if ([System.IO.File]::Exists($destination)) {
+        $backup = Join-Path $InstallDir ('.sealos-console-previous-' + [guid]::NewGuid() + '.exe')
+        [System.IO.File]::Replace($staged, $destination, $backup)
+        [System.IO.File]::Delete($backup)
+    }
     else { [System.IO.File]::Move($staged, $destination) }
     $staged = $null
     Write-Output "Installed sealos-console $Version to $destination"
