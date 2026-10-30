@@ -4,23 +4,17 @@ The client implements the Desktop password/regional-token workflow and the App L
 
 Reference implementation used to understand the API contracts: [labring/sealos v5.1.2-rc6](https://github.com/labring/sealos/tree/v5.1.2-rc6). This reference is not a claim that every endpoint or deployment matches that tag. App Launchpad and DB Provider source directories were subsequently extracted from that repository.
 
-## A workload can be valid Kubernetes and still fail OpenAPI parsing
+## Console-only operations
 
-For example, an environment variable may use:
+Version 0.2.0 removes the OpenAPI adapter and the `--api` / `--compare` flags. Remove those flags from existing scripts. Public endpoint creation is unsupported; configure it in the Sealos console.
 
-```json
-{"name":"POD_IP","valueFrom":{"fieldRef":{"fieldPath":"status.podIP"}}}
-```
+App summaries are read from the console workload list, including multi-container apps and environment references such as `fieldRef` and `configMapKeyRef`. The reduced schemas of some historical OpenAPI versions could not represent these workloads and silently omitted apps from list responses. The CLI no longer calls those endpoints.
 
-Some App Launchpad v2alpha schemas only model `valueFrom.secretKeyRef`. They cannot represent the example above. In the reference implementation, a list operation catches individual conversion errors and skips those apps, so HTTP 200 does not guarantee a complete list. This client keeps the console list and reports `missingFromOpenapi` when comparing adapters.
-
-The relevant upstream implementation is [appService.ts](https://github.com/labring/sealos/blob/v5.1.2-rc6/frontend/providers/applaunchpad/src/services/backend/appService.ts). The console's raw list is useful for preserving fields that a reduced API model cannot express.
+Database engine versions use `/api/platform/getVersion`, the same catalog endpoint used by the console. Some server versions return a static fallback catalog if the backend query fails, so a successful catalog read alone does not establish that an engine can be provisioned.
 
 ## Image preservation
 
 Console upgrades send a JSON Merge Patch through the platform's `/api/updateApp`. Since arrays are replaced, the client preserves all original containers and all nested fields, modifies one named image, and includes `metadata.resourceVersion`. It does not regenerate an existing workload from the create schema. Workload spec read-back must equal the previous spec plus the intended image change.
-
-OpenAPI upgrades use the server's image operation. They cannot select arbitrary sidecars and do not expose a documented atomic resource-version precondition. The client refuses incompatible workloads and never silently switches write adapters after a failure.
 
 The supported client request is narrow, but the actual server implementation still determines side effects. In particular, inspect your version's StatefulSet update behavior before real use; older server implementations may have different fallback paths. Test against an isolated workspace before relying on a new component build.
 
@@ -29,9 +23,8 @@ The supported client request is narrow, but the actual server implementation sti
 `mock serve` uses only memory and a loopback HTTP listener. It independently validates the expected request envelopes and simulates:
 
 - Desktop login/workspace/provider discovery;
-- console and OpenAPI app/database creation;
+- console app/database creation;
 - a single-container app and a multi-container app with `fieldRef`;
-- the OpenAPI omission and detail failure for unsupported env references;
 - resourceVersion conflicts and image-only merge semantics;
 - an accepted mutation followed by a client timeout.
 

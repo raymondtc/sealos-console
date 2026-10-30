@@ -89,18 +89,6 @@ func (s *Server) markReady(w object) {
 	r := number(lookup(w, "spec", "replicas"))
 	w["status"] = object{"observedGeneration": float64(s.version), "replicas": r, "updatedReplicas": r, "readyReplicas": r, "availableReplicas": r, "currentRevision": fmt.Sprint(s.version), "updateRevision": fmt.Sprint(s.version)}
 }
-func incompatible(w object) bool {
-	for _, c := range list(lookup(w, "spec", "template", "spec", "containers")) {
-		for _, e := range list(lookup(c, "env")) {
-			for kind := range objectOf(lookup(e, "valueFrom")) {
-				if kind != "secretKeyRef" {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
 func (s *Server) sortedApps() []any {
 	keys := []string{}
 	for k := range s.apps {
@@ -198,20 +186,9 @@ func (s *Server) route(method, path, credential string, body object) (int, any, 
 		case "/api/getApps":
 			a, b := good(s.sortedApps())
 			return respond(a, b)
-		case "/api/v2alpha/apps":
-			out := []any{}
-			for _, item := range s.sortedApps() {
-				work := objectOf(item)
-				if !incompatible(work) {
-					out = append(out, object{"name": lookup(work, "metadata", "name"), "image": object{"imageName": lookup(list(lookup(work, "spec", "template", "spec", "containers"))[0], "image")}})
-				}
-			}
-			return 200, out, false
 		case "/api/platform/getInitData":
 			a, b := good(object{"simulation": true})
 			return respond(a, b)
-		case "/api/v2alpha/openapi.json":
-			return 200, object{"openapi": "3.1.0", "info": object{"title": "Sealos API simulation", "version": "mock"}, "paths": object{"/apps": object{"post": object{}}}}, false
 		case "/api/getDBList":
 			out := []any{}
 			for _, db := range s.dbs {
@@ -219,28 +196,9 @@ func (s *Server) route(method, path, credential string, body object) (int, any, 
 			}
 			a, b := good(out)
 			return respond(a, b)
-		case "/api/v1/database":
-			out := []any{}
-			for _, db := range s.dbs {
-				out = append(out, object{"metadata": object{"name": db["name"], "namespace": "ns-demo"}, "spec": object{"clusterDefinitionRef": db["dbType"], "clusterVersionRef": db["version"]}, "status": object{"phase": "Running"}})
-			}
-			a, b := good(object{"items": out})
-			return respond(a, b)
-		case "/api/v1/database/version/list":
+		case "/api/platform/getVersion":
 			a, b := good(object{"postgresql": []any{object{"id": "postgresql-14.8.0"}}, "redis": []any{object{"id": "redis-7.0.6"}}})
 			return respond(a, b)
-		}
-		if strings.HasPrefix(path, "/api/v2alpha/apps/") {
-			n := strings.TrimPrefix(path, "/api/v2alpha/apps/")
-			work, ok := s.apps[n]
-			if !ok {
-				a, b := bad(404, "App not found.")
-				return respond(a, b)
-			}
-			if incompatible(work) {
-				return 500, object{"error": object{"code": "KUBERNETES_ERROR", "details": "env.valueFrom.secretKeyRef required; fieldRef is not supported by this simulated OpenAPI schema"}}, false
-			}
-			return 200, object{"name": n}, false
 		}
 	}
 	if method == "POST" && path == "/api/applyApp" {
@@ -281,47 +239,10 @@ func (s *Server) route(method, path, credential string, body object) (int, any, 
 		a, b := good([]any{work["kind"]})
 		return a, b, true
 	}
-	if method == "POST" && path == "/api/v2alpha/apps" {
-		n, image := text(body["name"]), text(lookup(body, "image", "imageName"))
-		if n == "" || image == "" {
-			a, b := bad(400, "Name and image required.")
-			return respond(a, b)
-		}
-		if _, ok := s.apps[n]; ok {
-			a, b := bad(409, "Already exists.")
-			return respond(a, b)
-		}
-		w := s.newApp(n, image, number(lookup(body, "quota", "replicas")))
-		c := objectOf(list(lookup(w, "spec", "template", "spec", "containers"))[0])
-		c["env"] = body["env"]
-		s.apps[n] = w
-		return 201, object{"name": n, "simulation": true}, true
-	}
-	if (method == "POST" && path == "/api/updateApp") || (method == "PATCH" && strings.HasPrefix(path, "/api/v2alpha/apps/")) {
+	if method == "POST" && path == "/api/updateApp" {
 		if s.Fault == "conflict" {
 			a, b := bad(409, "Simulated concurrent change.")
 			return respond(a, b)
-		}
-		if method == "PATCH" {
-			n := strings.TrimPrefix(path, "/api/v2alpha/apps/")
-			w, ok := s.apps[n]
-			if !ok {
-				a, b := bad(404, "App not found.")
-				return respond(a, b)
-			}
-			if incompatible(w) || len(list(lookup(w, "spec", "template", "spec", "containers"))) != 1 {
-				a, b := bad(400, "Unsupported app schema.")
-				return respond(a, b)
-			}
-			image := text(lookup(body, "image", "imageName"))
-			if image == "" || len(body) != 1 {
-				a, b := bad(400, "Image-only update required.")
-				return respond(a, b)
-			}
-			objectOf(list(lookup(w, "spec", "template", "spec", "containers"))[0])["image"] = image
-			objectOf(lookup(w, "metadata", "annotations"))["originImageName"] = image
-			s.markReady(w)
-			return 204, nil, true
 		}
 		n := text(body["appName"])
 		w, ok := s.apps[n]
@@ -370,18 +291,14 @@ func (s *Server) route(method, path, credential string, body object) (int, any, 
 		a, b := good(nil)
 		return a, b, true
 	}
-	if method == "POST" && (path == "/api/createDB" || path == "/api/v1/database") {
-		n, kind, version := text(body["name"]), text(body["type"]), text(body["version"])
-		cpu, memory, storage, replicas := number(lookup(body, "resource", "cpu"))*1000, number(lookup(body, "resource", "memory"))*1024, lookup(body, "resource", "storage"), lookup(body, "resource", "replicas")
-		if path == "/api/createDB" {
-			if body["isEdit"] != false {
-				a, b := bad(400, "Editing is not simulated.")
-				return respond(a, b)
-			}
-			form := objectOf(body["dbForm"])
-			n, kind, version = text(form["dbName"]), text(form["dbType"]), text(form["dbVersion"])
-			cpu, memory, storage, replicas = number(form["cpu"]), number(form["memory"]), form["storage"], form["replicas"]
+	if method == "POST" && path == "/api/createDB" {
+		if body["isEdit"] != false {
+			a, b := bad(400, "Editing is not simulated.")
+			return respond(a, b)
 		}
+		form := objectOf(body["dbForm"])
+		n, kind, version := text(form["dbName"]), text(form["dbType"]), text(form["dbVersion"])
+		cpu, memory, storage, replicas := number(form["cpu"]), number(form["memory"]), form["storage"], form["replicas"]
 		if n == "" {
 			a, b := bad(400, "Database name required.")
 			return respond(a, b)

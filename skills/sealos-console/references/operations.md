@@ -1,6 +1,6 @@
 # Operation reference
 
-All commands emit JSON. Common flags can appear before or after commands. `--api console` is the default; `--api openapi` is an explicit choice. There is no automatic write fallback.
+All commands emit JSON. Common flags can appear before or after commands. All operations use console APIs; there is no API-selection flag.
 
 ## Application creation
 
@@ -22,7 +22,7 @@ Optional fields: `command` and `args` as string arrays; `storage` as objects wit
 
 Console creation supports private TCP ports, persistent storage and Kubernetes fieldRef/configMapKeyRef/secretKeyRef environment references. It generates platform-managed Deployment/StatefulSet and Service resources and submits them through `/api/applyApp`; it is not an arbitrary YAML channel.
 
-Public HTTP domains (`ports[].public=true`) require the OpenAPI adapter. Existing imagePullSecret names, fieldRef and configMapKeyRef are not supported by that schema. Inline registry credentials, GPU settings, custom ingress rules and configuration-file mounts are not implemented.
+Public endpoint creation (`ports[].public=true`), inline registry credentials, GPU settings, custom ingress rules and configuration-file mounts are not implemented. Public-port requests fail explicitly; use the Sealos console to configure public access.
 
 ## Database creation
 
@@ -42,7 +42,7 @@ Public HTTP domains (`ports[].public=true`) require the OpenAPI adapter. Existin
 
 Use the exact version returned by `db engines`, not an assumed version from this example. `terminationPolicy` is mandatory; `WipeOut` has different future deletion semantics from `Delete`. The CLI does not expose deletion. Backup defaults off; when enabled it requests daily 02:00 backups retained for seven days.
 
-Console uses `/api/createDB` with `isEdit=false`, millicores and MiB. OpenAPI uses `/api/v1/database`, CPU cores and GiB, and accepts a narrower set of resource sizes. Do not pass console units to the OpenAPI body.
+Console uses `/api/createDB` with `isEdit=false`, millicores and MiB. Engine versions come from the console endpoint `/api/platform/getVersion`; some server builds can return a fallback catalog on backend failure.
 
 ## Image updates
 
@@ -51,12 +51,12 @@ sealos-console --workspace NAMESPACE app upgrade APP \
   --container CONTAINER --image registry.example.com/app:v2 --execute --wait 120
 ```
 
-Console reads the raw workload and sends one image-only patch to `/api/updateApp`, preserving every container and nested field. It includes resourceVersion and verifies the spec after writing. OpenAPI sends `PATCH /api/v2alpha/apps/{name}` with only `image.imageName` and provides no documented atomic resource-version precondition. Unknown server builds, especially StatefulSet fallback behavior, still need acceptance testing.
+Console reads the raw workload and sends one image-only patch to `/api/updateApp`, preserving every container and nested field. It includes resourceVersion and verifies the spec after writing. Unknown server builds, especially StatefulSet fallback behavior, still need acceptance testing.
 
 Same-image upgrades are no-ops. Cross-registry changes with existing pull secrets are refused. Failed writes are never retried automatically. `WRITE_UNVERIFIED` means a write may have succeeded but read-back did not establish the expected state; inspect before doing anything else.
 
 ## Version and test boundaries
 
-The reference API family is visible in <https://github.com/labring/sealos/tree/v5.1.2-rc6>. Desktop and providers may use different builds. Do not identify the whole deployment from OpenAPI version strings, available database engine versions or Next.js build IDs.
+The reference API family is visible in <https://github.com/labring/sealos/tree/v5.1.2-rc6>. Desktop and providers may use different builds. Do not identify the whole deployment from available database engine versions or Next.js build IDs.
 
 The local simulator has no Kubernetes or Sealos controllers. Its synthetic ready states test the client workflow only. Real quota, image pulling, storage, ingress, RBAC and database readiness are not validated by it.

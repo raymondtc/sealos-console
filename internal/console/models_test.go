@@ -58,7 +58,7 @@ func TestImageOnlyMergePreservesComplexWorkload(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			before := fixture()
 			snapshot := clone(before)
-			body, diff, err := ImageUpdate(before, "registry.example.com/new:v2", target, "console")
+			body, diff, err := ImageUpdate(before, "registry.example.com/new:v2", target)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -90,32 +90,19 @@ func TestImageOnlyMergePreservesComplexWorkload(t *testing.T) {
 }
 func TestUpgradeGuardrails(t *testing.T) {
 	w := fixture()
-	for _, test := range []struct{ name, container, api, image string }{
-		{"ambiguous", "", "console", "registry.example.com/demo:v2"},
-		{"missing", "absent", "console", "registry.example.com/demo:v2"},
-		{"openapi-multicontainer", "main", "openapi", "registry.example.com/demo:v2"},
-		{"registry-change", "main", "console", "other.example.com/demo:v2"},
-		{"untagged", "main", "console", "registry.example.com/demo"},
+	for _, test := range []struct{ name, container, image string }{
+		{"ambiguous", "", "registry.example.com/demo:v2"},
+		{"missing", "absent", "registry.example.com/demo:v2"},
+		{"registry-change", "main", "other.example.com/demo:v2"},
+		{"untagged", "main", "registry.example.com/demo"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, _, err := ImageUpdate(w, test.image, test.container, test.api); err == nil {
+			if _, _, err := ImageUpdate(w, test.image, test.container); err == nil {
 				t.Fatal("expected refusal")
 			}
 		})
 	}
-	cs := arr(at(w, "spec", "template", "spec", "containers"))
-	obj(at(w, "spec", "template", "spec"))["containers"] = cs[:1]
-	if _, _, err := ImageUpdate(w, "registry.example.com/demo:v2", "main", "openapi"); err == nil {
-		t.Fatal("fieldRef must not be forced through incompatible OpenAPI")
-	}
-	delete(obj(cs[0]), "env")
-	b, _, err := ImageUpdate(w, "registry.example.com/demo:v2", "main", "openapi")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !sameJSON(b, Object{"image": Object{"imageName": "registry.example.com/demo:v2"}}) {
-		t.Fatal("OpenAPI sent extra update fields")
-	}
+
 }
 func TestSummaryDoesNotExposeEnvValues(t *testing.T) {
 	s := AppSummary(fixture())
@@ -125,15 +112,15 @@ func TestSummaryDoesNotExposeEnvValues(t *testing.T) {
 			t.Fatal("summary exposed env value")
 		}
 	}
-	if len(arr(s["openapiIssues"])) != 2 {
-		t.Fatal("missing incompatible reference diagnostics")
+	if len(arr(at(arr(s["containers"])[0], "references"))) != 2 {
+		t.Fatal("missing environment reference summaries")
 	}
 }
 func appConfig() Object {
 	return Object{"name": "demo", "image": "nginx:1.27.5", "cpu": .5, "memoryMi": float64(512), "ports": []any{Object{"number": float64(8080)}}}
 }
 func TestAppCreateContracts(t *testing.T) {
-	s, body, err := AppCreate(appConfig(), "console")
+	s, body, err := AppCreate(appConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,13 +139,6 @@ func TestAppCreateContracts(t *testing.T) {
 	if at(work, "spec", "template", "spec", "automountServiceAccountToken") != false {
 		t.Fatal("unexpected token mount")
 	}
-	_, v2, err := AppCreate(appConfig(), "openapi")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if at(v2, "quota", "memory") != .5 || at(arr(v2["ports"])[0], "isPublic") != false {
-		t.Fatal("OpenAPI changed units or exposed a port")
-	}
 	if s["replicas"] != float64(1) {
 		t.Fatal("wrong replicas default")
 	}
@@ -166,25 +146,22 @@ func TestAppCreateContracts(t *testing.T) {
 func TestCreateRejectsUnsupportedOrUnknownInput(t *testing.T) {
 	c := appConfig()
 	c["arbitraryKubernetesObject"] = Object{}
-	if _, _, e := AppCreate(c, "console"); e == nil {
+	if _, _, e := AppCreate(c); e == nil {
 		t.Fatal("unknown field allowed")
 	}
 	c = appConfig()
 	c["replicas"] = float64(0)
-	if _, _, e := AppCreate(c, "console"); e == nil {
+	if _, _, e := AppCreate(c); e == nil {
 		t.Fatal("zero replicas silently defaulted")
 	}
 	c = appConfig()
 	c["env"] = []any{Object{"name": "POD_IP", "valueFrom": Object{"fieldRef": Object{"fieldPath": "status.podIP"}}}}
-	if _, _, e := AppCreate(c, "console"); e != nil {
+	if _, _, e := AppCreate(c); e != nil {
 		t.Fatal(e)
-	}
-	if _, _, e := AppCreate(c, "openapi"); e == nil {
-		t.Fatal("incompatible env accepted")
 	}
 	c = appConfig()
 	obj(arr(c["ports"])[0])["public"] = true
-	if _, _, e := AppCreate(c, "console"); e == nil {
+	if _, _, e := AppCreate(c); e == nil {
 		t.Fatal("public port must not silently become private")
 	}
 }
@@ -192,27 +169,17 @@ func dbConfig() Object {
 	return Object{"name": "demo-db", "type": "postgresql", "version": "postgresql-14.8.0", "cpu": float64(1), "memoryMi": float64(1024), "storageGi": float64(10), "replicas": float64(1), "terminationPolicy": "Delete"}
 }
 func TestDatabaseCreateUnitsAndNoEdit(t *testing.T) {
-	console, err := DBCreate(dbConfig(), "console")
+	console, err := DBCreate(dbConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if console["isEdit"] != false || at(console, "dbForm", "cpu") != float64(1000) || at(console, "dbForm", "memory") != float64(1024) {
 		t.Fatal("incorrect console creation contract")
 	}
-	v1, err := DBCreate(dbConfig(), "openapi")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if at(v1, "resource", "memory") != float64(1) {
-		t.Fatal("v1 memory not converted")
-	}
 	small := dbConfig()
 	small["cpu"] = .5
 	small["memoryMi"] = float64(512)
-	if _, e := DBCreate(small, "openapi"); e == nil {
-		t.Fatal("unsupported v1 resource accepted")
-	}
-	if _, e := DBCreate(small, "console"); e != nil {
+	if _, e := DBCreate(small); e != nil {
 		t.Fatal(e)
 	}
 }

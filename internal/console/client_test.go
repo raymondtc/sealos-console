@@ -140,7 +140,16 @@ func TestLoginDoesNotInitializeNewAccount(t *testing.T) {
 	}
 }
 func TestCLIFlagsAndErrors(t *testing.T) {
-	o, pos, e := parse([]string{"app", "upgrade", "demo", "--image", "nginx:1.27.5", "--api", "console", "--workspace", "ns-demo"})
+	for _, args := range [][]string{
+		{"app", "list", "--compare"},
+		{"app", "list", "--api", "openapi"},
+		{"app", "list", "--api", "console"},
+	} {
+		if _, _, err := parse(args); err == nil {
+			t.Fatal("removed option accepted", args)
+		}
+	}
+	o, pos, e := parse([]string{"app", "upgrade", "demo", "--image", "nginx:1.27.5", "--workspace", "ns-demo"})
 	if e != nil || o.image != "nginx:1.27.5" || len(pos) != 3 {
 		t.Fatal("flags after name failed", e)
 	}

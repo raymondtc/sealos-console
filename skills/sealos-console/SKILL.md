@@ -1,6 +1,6 @@
 ---
 name: sealos-console
-description: Operate Sealos applications and managed databases through console APIs or OpenAPI using the sealos-console CLI. Use for resource discovery, app/database creation, image upgrades and local API simulation; not cluster installation or direct kubectl administration.
+description: Operate Sealos applications and managed databases through console APIs using the sealos-console CLI. Use for resource discovery, app/database creation, image upgrades and local API simulation; not cluster installation or direct kubectl administration.
 ---
 
 # Sealos console operations
@@ -16,17 +16,17 @@ Use the `sealos-console` Go CLI on PATH. If absent, install a matching binary fr
 ## Query and diagnose
 
 ```sh
-sealos-console --profile NAME app list --compare
+sealos-console --profile NAME app list
 sealos-console --profile NAME app get APP
 sealos-console --profile NAME db list
 sealos-console --profile NAME db engines
 ```
 
-An OpenAPI list may silently omit apps whose env references cannot be parsed. `fieldRef` and `configMapKeyRef` are common examples; this does not make the underlying workload invalid. Keep the console list as the canonical inventory and report the difference. Never recreate an app merely because it is missing from OpenAPI.
+Queries use the console inventory and retain applications with multiple containers or environment references. Summaries report reference kinds without exposing environment values.
 
 ## Create or upgrade
 
-Read [references/operations.md](references/operations.md) for input shapes, API selection and limitations.
+Read [references/operations.md](references/operations.md) for input shapes and limitations.
 
 Creation and upgrades preview by default. Inspect the plan, then add `--execute` when the user's existing authorization covers that exact target and operation. A request to develop/test tooling is not a request to mutate a production resource. Do not ask again for approval that the user has already provided.
 
@@ -36,11 +36,11 @@ sealos-console --profile NAME --workspace NAMESPACE db create --file database.js
 sealos-console --profile NAME --workspace NAMESPACE app upgrade APP --container CONTAINER --image IMAGE
 ```
 
-For image upgrades, query the app first. Specify `--container` for multiple containers. Prefer `--api console` to preserve original arrays and unknown fields; OpenAPI is limited to compatible single-container applications. Never drop `fieldRef`, sidecars, probes or mounts to make a schema accept the workload.
+For image upgrades, query the app first. Specify `--container` for multiple containers. Image upgrades preserve original arrays and unknown fields. Never drop `fieldRef`, sidecars, probes or mounts to make a schema accept the workload.
 
-After authorized execution use `--wait SECONDS`, or `app wait APP`, when readiness matters. Distinguish configuration accepted/visible from rollout ready. A failed, timed-out or unverifiable write must be followed by inspection, not automatic retry, rollback or a switch to another write adapter.
+After authorized execution use `--wait SECONDS`, or `app wait APP`, when readiness matters. Distinguish configuration accepted/visible from rollout ready. A failed, timed-out or unverifiable write must be followed by inspection, not automatic retry or rollback.
 
-CPU/memory edits, database edits/upgrades, deletion and credential retrieval are outside this CLI's current scope. CPU/memory can be specified when creating a resource.
+Public endpoint creation, CPU/memory edits, database edits/upgrades, deletion and credential retrieval are outside this CLI's current scope. CPU/memory can be specified when creating a resource.
 
 ## Local simulation
 
@@ -50,7 +50,7 @@ Start `sealos-console mock serve`. Use a separate `mock` profile and synthetic `
 printf '%s\n' demo | sealos-console auth login --profile mock \
   --url http://127.0.0.1:8787 --username demo --password-stdin \
   --local-test --workspace ns-demo
-sealos-console --profile mock app list --compare
+sealos-console --profile mock app list
 ```
 
 `web` is a single-container fixture; `worker` includes a sidecar and fieldRef variables. Fault modes are `--fault conflict` and `--fault timeout-after-write`. Restarting clears state. No real workloads or databases run; never describe simulated success as real Sealos acceptance testing.

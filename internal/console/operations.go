@@ -2,7 +2,6 @@ package console
 
 import (
 	"errors"
-	"net/url"
 	"time"
 )
 
@@ -55,7 +54,7 @@ func (o Operations) Workload(appName string) (Object, error) {
 	}
 	return found, nil
 }
-func (o Operations) Apps(compare bool) (Object, error) {
+func (o Operations) Apps() (Object, error) {
 	rows, err := o.Workloads()
 	if err != nil {
 		return nil, err
@@ -65,45 +64,14 @@ func (o Operations) Apps(compare bool) (Object, error) {
 		items = append(items, AppSummary(obj(w)))
 	}
 	result := Object{"namespace": o.Namespace, "source": "console", "items": items}
-	if compare {
-		v2, err := o.call("applaunchpad", "GET", "/api/v2alpha/apps", nil, false)
-		if err != nil {
-			return nil, err
-		}
-		data, ok := v2.([]any)
-		if !ok {
-			return nil, fail("PROTOCOL", "Unexpected OpenAPI app list.")
-		}
-		names, missing := map[string]bool{}, map[string]bool{}
-		for _, v := range data {
-			names[str(at(v, "name"))] = true
-		}
-		for _, w := range rows {
-			n := str(at(w, "metadata", "name"))
-			if !names[n] {
-				missing[n] = true
-			}
-		}
-		result["source"] = "console+openapi"
-		result["openapiNames"] = sortedKeys(names)
-		result["missingFromOpenapi"] = sortedKeys(missing)
-		result["note"] = "Console list is retained so OpenAPI parsing errors cannot hide existing apps."
-	}
 	return result, nil
 }
-func (o Operations) App(appName, api string) (Object, error) {
+func (o Operations) App(appName string) (Object, error) {
 	w, err := o.Workload(appName)
 	if err != nil {
 		return nil, err
 	}
 	out := Object{"source": "console", "app": AppSummary(w)}
-	if api == "openapi" {
-		_, err = o.call("applaunchpad", "GET", "/api/v2alpha/apps/"+url.PathEscape(appName), nil, false)
-		out["openapiReadable"] = err == nil
-		if err != nil {
-			out["openapiError"] = publicFailure(err)
-		}
-	}
 	return out, nil
 }
 func publicFailure(err error) *Failure {
@@ -113,17 +81,10 @@ func publicFailure(err error) *Failure {
 	}
 	return &Failure{Code: "CLIENT_ERROR", Message: "Unexpected client failure; no automatic retry."}
 }
-func (o Operations) Databases(api string) ([]any, error) {
-	path := "/api/getDBList"
-	if api == "openapi" {
-		path = "/api/v1/database"
-	}
-	data, err := o.call("dbprovider", "GET", path, nil, true)
+func (o Operations) Databases() ([]any, error) {
+	data, err := o.call("dbprovider", "GET", "/api/getDBList", nil, true)
 	if err != nil {
 		return nil, err
-	}
-	if api == "openapi" {
-		data = at(data, "items")
 	}
 	rows, ok := data.([]any)
 	if !ok {
@@ -131,21 +92,14 @@ func (o Operations) Databases(api string) ([]any, error) {
 	}
 	out := []any{}
 	for _, row := range rows {
-		if api == "openapi" {
-			if str(at(row, "metadata", "namespace")) != o.Namespace {
-				return nil, fail("PROTOCOL", "Database namespace mismatch.")
+		m := Object{}
+		for _, k := range []string{"name", "dbType", "cpu", "memory", "storage", "replicas"} {
+			if v, ok := obj(row)[k]; ok {
+				m[k] = v
 			}
-			out = append(out, Object{"name": at(row, "metadata", "name"), "type": at(row, "spec", "clusterDefinitionRef"), "version": at(row, "spec", "clusterVersionRef"), "status": at(row, "status", "phase")})
-		} else {
-			m := Object{}
-			for _, k := range []string{"name", "dbType", "cpu", "memory", "storage", "replicas"} {
-				if v, ok := obj(row)[k]; ok {
-					m[k] = v
-				}
-			}
-			m["status"] = at(row, "status", "value")
-			out = append(out, m)
 		}
+		m["status"] = at(row, "status", "value")
+		out = append(out, m)
 	}
 	return out, nil
 }
@@ -153,7 +107,7 @@ func (o Operations) DB(n string) (Object, error) {
 	if e := validName(n); e != nil {
 		return nil, e
 	}
-	rows, err := o.Databases("console")
+	rows, err := o.Databases()
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +119,7 @@ func (o Operations) DB(n string) (Object, error) {
 	return nil, fail("NOT_FOUND", "Database not found in console list.")
 }
 func (o Operations) Engines() (Object, error) {
-	data, err := o.call("dbprovider", "GET", "/api/v1/database/version/list", nil, true)
+	data, err := o.call("dbprovider", "GET", "/api/platform/getVersion", nil, true)
 	if err != nil {
 		return nil, err
 	}
@@ -176,8 +130,8 @@ func (o Operations) Engines() (Object, error) {
 	return m, nil
 }
 
-func (o Operations) CreateApp(raw Object, api string, execute bool, wait time.Duration) (Object, error) {
-	s, body, err := AppCreate(raw, api)
+func (o Operations) CreateApp(raw Object, execute bool, wait time.Duration) (Object, error) {
+	s, body, err := AppCreate(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -192,22 +146,18 @@ func (o Operations) CreateApp(raw Object, api string, execute bool, wait time.Du
 		}
 	}
 	probe, path := "/api/platform/getInitData", "/api/applyApp"
-	if api == "openapi" {
-		probe = "/api/v2alpha/openapi.json"
-		path = "/api/v2alpha/apps"
-	}
-	if _, err = o.call("applaunchpad", "GET", probe, nil, api != "openapi"); err != nil {
+	if _, err = o.call("applaunchpad", "GET", probe, nil, true); err != nil {
 		return nil, err
 	}
 	envNames := []any{}
 	for _, e := range arr(s["env"]) {
 		envNames = append(envNames, at(e, "name"))
 	}
-	plan := Object{"operation": "app.create", "api": api, "method": "POST", "path": path, "namespace": o.Namespace, "name": n, "image": s["image"], "cpu": s["cpu"], "memoryMi": s["memoryMi"], "replicas": s["replicas"], "ports": s["ports"], "storage": s["storage"], "environmentNames": envNames, "executed": false}
+	plan := Object{"operation": "app.create", "api": "console", "method": "POST", "path": path, "namespace": o.Namespace, "name": n, "image": s["image"], "cpu": s["cpu"], "memoryMi": s["memoryMi"], "replicas": s["replicas"], "ports": s["ports"], "storage": s["storage"], "environmentNames": envNames, "executed": false}
 	if !execute {
 		return plan, nil
 	}
-	if _, err = o.call("applaunchpad", "POST", path, body, api != "openapi"); err != nil {
+	if _, err = o.call("applaunchpad", "POST", path, body, true); err != nil {
 		return nil, err
 	}
 	w, err := o.Workload(n)
@@ -234,8 +184,8 @@ func (o Operations) CreateApp(raw Object, api string, execute bool, wait time.Du
 	}
 	return plan, nil
 }
-func (o Operations) CreateDB(raw Object, api string, execute bool, wait time.Duration) (Object, error) {
-	body, err := DBCreate(raw, api)
+func (o Operations) CreateDB(raw Object, execute bool, wait time.Duration) (Object, error) {
+	body, err := DBCreate(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +202,7 @@ func (o Operations) CreateDB(raw Object, api string, execute bool, wait time.Dur
 	if !allowed {
 		return nil, fail("INPUT", "Database version is not available on this platform.")
 	}
-	rows, err := o.Databases("console")
+	rows, err := o.Databases()
 	if err != nil {
 		return nil, err
 	}
@@ -263,10 +213,7 @@ func (o Operations) CreateDB(raw Object, api string, execute bool, wait time.Dur
 		}
 	}
 	path := "/api/createDB"
-	if api == "openapi" {
-		path = "/api/v1/database"
-	}
-	plan := Object{"operation": "db.create", "api": api, "method": "POST", "path": path, "namespace": o.Namespace, "configuration": raw, "executed": false}
+	plan := Object{"operation": "db.create", "api": "console", "method": "POST", "path": path, "namespace": o.Namespace, "configuration": raw, "executed": false}
 	if !execute {
 		return plan, nil
 	}
@@ -297,26 +244,21 @@ func (o Operations) CreateDB(raw Object, api string, execute bool, wait time.Dur
 	return plan, nil
 }
 
-func (o Operations) Upgrade(appName, target, container, api string, execute bool, wait time.Duration) (Object, error) {
+func (o Operations) Upgrade(appName, target, container string, execute bool, wait time.Duration) (Object, error) {
 	w, err := o.Workload(appName)
 	if err != nil {
 		return nil, err
 	}
-	body, diff, err := ImageUpdate(w, target, container, api)
+	body, diff, err := ImageUpdate(w, target, container)
 	if err != nil {
 		return nil, err
 	}
 	path, method, concurrency := "/api/updateApp", "POST", "resourceVersion in merge patch"
-	if api == "openapi" {
-		path = "/api/v2alpha/apps/" + url.PathEscape(appName)
-		method = "PATCH"
-		concurrency = "preflight read only; OpenAPI has no documented atomic precondition"
-	}
 	kept := []any{}
 	for _, c := range arr(at(w, "spec", "template", "spec", "containers")) {
 		kept = append(kept, at(c, "name"))
 	}
-	plan := Object{"operation": "app.upgrade", "api": api, "method": method, "path": path, "namespace": o.Namespace, "name": appName, "diff": diff, "resourceVersion": at(w, "metadata", "resourceVersion"), "concurrency": concurrency, "preservedContainers": kept, "executed": false}
+	plan := Object{"operation": "app.upgrade", "api": "console", "method": method, "path": path, "namespace": o.Namespace, "name": appName, "diff": diff, "resourceVersion": at(w, "metadata", "resourceVersion"), "concurrency": concurrency, "preservedContainers": kept, "executed": false}
 	if body == nil {
 		plan["state"] = "unchanged"
 		return plan, nil
@@ -331,7 +273,7 @@ func (o Operations) Upgrade(appName, target, container, api string, execute bool
 	if at(latest, "metadata", "resourceVersion") != at(w, "metadata", "resourceVersion") {
 		return nil, fail("CONFLICT", "Workload changed during planning. No write sent; generate a new plan.")
 	}
-	if _, err = o.call("applaunchpad", method, path, body, api != "openapi"); err != nil {
+	if _, err = o.call("applaunchpad", method, path, body, true); err != nil {
 		return nil, err
 	}
 	after, err := o.Workload(appName)
@@ -416,7 +358,7 @@ func Doctor(s *Session) (Object, error) {
 		name string
 		run  func() (any, error)
 	}{
-		{"apps", func() (any, error) { return o.Apps(true) }}, {"databases", func() (any, error) { return o.Databases("console") }}, {"databaseVersions", func() (any, error) { return o.Engines() }},
+		{"apps", func() (any, error) { return o.Apps() }}, {"databases", func() (any, error) { return o.Databases() }}, {"databaseVersions", func() (any, error) { return o.Engines() }},
 	} {
 		data, e := test.run()
 		if e != nil {
@@ -426,11 +368,4 @@ func Doctor(s *Session) (Object, error) {
 		}
 	}
 	return Object{"url": s.Profile.URL, "namespace": s.Namespace, "providers": services, "kubeconfigMenuEnabled": at(config, "desktop", "layout", "kubeconfigEnabled"), "authentication": "Regional token stored locally; provider kubeconfig stays in memory; no Kubernetes transport", "platformRelease": "unconfirmed; API versions do not identify the installed platform release", "checks": checks}, nil
-}
-
-func validateAPI(api string) error {
-	if api != "console" && api != "openapi" {
-		return fail("INPUT", "Unknown API mode %q; choose console or openapi.", api)
-	}
-	return nil
 }

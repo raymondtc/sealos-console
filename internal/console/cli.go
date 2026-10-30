@@ -12,13 +12,13 @@ import (
 	"time"
 )
 
-const help = `sealos-console — Sealos console API and OpenAPI client
+const help = `sealos-console — Sealos console API client
 
 Usage:
   sealos-console mock serve [--listen 127.0.0.1:8787] [--fault conflict|timeout-after-write]
   sealos-console auth login --url https://cloud.example.com --username USER --password-stdin
   sealos-console auth status | auth logout | workspace list | doctor
-  sealos-console app list [--compare] | app get NAME | app wait NAME
+  sealos-console app list | app get NAME | app wait NAME
   sealos-console app create --file app.json [--execute] [--wait 120]
   sealos-console app upgrade NAME --image IMAGE [--container NAME] [--execute]
   sealos-console db list | db get NAME | db engines
@@ -27,7 +27,6 @@ Usage:
 Common flags (may appear before or after the command):
   --profile NAME       Saved login profile (default: default)
   --workspace NS_OR_UID Exact workspace; required for creation/upgrade unless saved at login
-  --api console|openapi API adapter (default: console)
   --json               Output is always JSON
   --local-test         Login to a loopback-only mock server (never a remote host)
 
@@ -37,11 +36,11 @@ Use SEALOS_PASSWORD or --password-stdin; passwords are not accepted in command a
 `
 
 type options struct {
-	profile, workspace, api, base, username, file, image, container string
-	listen, fault                                                   string
-	passwordStdin, execute, compare, json, help, version            bool
-	localTest                                                       bool
-	wait, timeout                                                   int
+	profile, workspace, base, username, file, image, container string
+	listen, fault                                              string
+	passwordStdin, execute, json, help, version                bool
+	localTest                                                  bool
+	wait, timeout                                              int
 }
 
 func parse(args []string) (options, []string, error) {
@@ -50,7 +49,6 @@ func parse(args []string) (options, []string, error) {
 	f.SetOutput(io.Discard)
 	f.StringVar(&o.profile, "profile", "default", "")
 	f.StringVar(&o.workspace, "workspace", "", "")
-	f.StringVar(&o.api, "api", "console", "")
 	f.StringVar(&o.base, "url", "", "")
 	f.StringVar(&o.username, "username", os.Getenv("SEALOS_USERNAME"), "")
 	f.StringVar(&o.file, "file", "", "")
@@ -61,14 +59,13 @@ func parse(args []string) (options, []string, error) {
 	f.BoolVar(&o.localTest, "local-test", false, "")
 	f.BoolVar(&o.passwordStdin, "password-stdin", false, "")
 	f.BoolVar(&o.execute, "execute", false, "")
-	f.BoolVar(&o.compare, "compare", false, "")
 	f.BoolVar(&o.json, "json", false, "")
 	f.BoolVar(&o.help, "help", false, "")
 	f.BoolVar(&o.help, "h", false, "")
 	f.BoolVar(&o.version, "version", false, "")
 	f.IntVar(&o.wait, "wait", 0, "")
 	f.IntVar(&o.timeout, "timeout", 120, "")
-	bools := map[string]bool{"password-stdin": true, "execute": true, "compare": true, "json": true, "help": true, "h": true, "version": true, "local-test": true}
+	bools := map[string]bool{"password-stdin": true, "execute": true, "json": true, "help": true, "h": true, "version": true, "local-test": true}
 	flags, pos := []string{}, []string{}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -101,9 +98,6 @@ func parse(args []string) (options, []string, error) {
 	}
 	if o.wait < 0 || o.wait > 3600 || o.timeout < 0 || o.timeout > 3600 {
 		return o, nil, fail("INPUT", "Wait duration must be 0–3600 seconds.")
-	}
-	if err := validateAPI(o.api); err != nil {
-		return o, nil, err
 	}
 	return o, pos, nil
 }
@@ -233,9 +227,9 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 	wait := time.Duration(o.wait) * time.Second
 	switch pos[0] + " " + pos[1] {
 	case "app list":
-		return ops.Apps(o.compare || o.api == "openapi")
+		return ops.Apps()
 	case "app get":
-		return ops.App(pos[2], o.api)
+		return ops.App(pos[2])
 	case "app wait":
 		return ops.WaitApp(pos[2], time.Duration(o.timeout)*time.Second, "", "")
 	case "app create":
@@ -243,12 +237,12 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 		if e != nil {
 			return nil, e
 		}
-		return ops.CreateApp(raw, o.api, o.execute, wait)
+		return ops.CreateApp(raw, o.execute, wait)
 	case "app upgrade":
-		return ops.Upgrade(pos[2], o.image, o.container, o.api, o.execute, wait)
+		return ops.Upgrade(pos[2], o.image, o.container, o.execute, wait)
 	case "db list":
-		rows, e := ops.Databases(o.api)
-		return Object{"namespace": s.Namespace, "api": o.api, "items": rows}, e
+		rows, e := ops.Databases()
+		return Object{"namespace": s.Namespace, "api": "console", "items": rows}, e
 	case "db get":
 		return ops.DB(pos[2])
 	case "db engines":
@@ -258,7 +252,7 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 		if e != nil {
 			return nil, e
 		}
-		return ops.CreateDB(raw, o.api, o.execute, wait)
+		return ops.CreateDB(raw, o.execute, wait)
 	}
 	return nil, fail("INPUT", "Unknown command.")
 }

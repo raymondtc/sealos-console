@@ -31,11 +31,9 @@ func (f *fakeProvider) Provider(service, method, path string, body any, envelope
 				return []any{}, nil
 			}
 			return []any{clone(f.work)}, nil
-		case "/api/v2alpha/apps":
-			return []any{}, nil
-		case "/api/platform/getInitData", "/api/v2alpha/openapi.json":
+		case "/api/platform/getInitData":
 			return Object{}, nil
-		case "/api/v1/database/version/list":
+		case "/api/platform/getVersion":
 			return Object{"postgresql": []any{Object{"id": "postgresql-14.8.0"}}}, nil
 		case "/api/getDBList":
 			if f.dbCreated {
@@ -62,22 +60,13 @@ func (f *fakeProvider) Provider(service, method, path string, body any, envelope
 			}
 			obj(f.work["metadata"])["resourceVersion"] = "11"
 			return nil, nil
-		case "/api/v2alpha/apps/demo":
-			obj(arr(at(f.work, "spec", "template", "spec", "containers"))[0])["image"] = at(body, "image", "imageName")
-			obj(f.work["metadata"])["resourceVersion"] = "11"
-			return nil, nil
 		case "/api/applyApp":
 			var w Object
 			_ = json.Unmarshal([]byte(str(arr(at(body, "yamlList"))[0])), &w)
 			obj(w["metadata"])["namespace"] = "ns-demo"
 			f.work = w
 			return nil, nil
-		case "/api/v2alpha/apps":
-			f.work = fixture()
-			obj(arr(at(f.work, "spec", "template", "spec", "containers"))[0])["name"] = "demo"
-			obj(arr(at(f.work, "spec", "template", "spec", "containers"))[0])["image"] = at(body, "image", "imageName")
-			return nil, nil
-		case "/api/createDB", "/api/v1/database":
+		case "/api/createDB":
 			f.dbCreated = true
 			return nil, nil
 		}
@@ -87,7 +76,7 @@ func (f *fakeProvider) Provider(service, method, path string, body any, envelope
 func TestUpgradePreviewAndApply(t *testing.T) {
 	f := &fakeProvider{work: fixture()}
 	o := Operations{Session: f, Namespace: "ns-demo"}
-	plan, e := o.Upgrade("demo", "registry.example.com/demo:v2", "main", "console", false, 0)
+	plan, e := o.Upgrade("demo", "registry.example.com/demo:v2", "main", false, 0)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -98,7 +87,7 @@ func TestUpgradePreviewAndApply(t *testing.T) {
 	if strings.Contains(string(b), "SENSITIVE_FIXTURE_VALUE") {
 		t.Fatal("preview leaked value")
 	}
-	out, e := o.Upgrade("demo", "registry.example.com/demo:v2", "main", "console", true, 0)
+	out, e := o.Upgrade("demo", "registry.example.com/demo:v2", "main", true, 0)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -111,7 +100,7 @@ func TestWriteConflictTimeoutAndUnexpectedChange(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := &fakeProvider{work: fixture(), race: mode == "race", timeout: mode == "timeout", damage: mode == "damage"}
 			o := Operations{Session: f, Namespace: "ns-demo"}
-			_, e := o.Upgrade("demo", "registry.example.com/demo:v2", "main", "console", true, 0)
+			_, e := o.Upgrade("demo", "registry.example.com/demo:v2", "main", true, 0)
 			if e == nil {
 				t.Fatal("expected failure")
 			}
@@ -125,53 +114,49 @@ func TestWriteConflictTimeoutAndUnexpectedChange(t *testing.T) {
 		})
 	}
 }
-func TestBothCreationAdapters(t *testing.T) {
-	for _, api := range []string{"console", "openapi"} {
-		t.Run(api, func(t *testing.T) {
-			f := &fakeProvider{}
-			o := Operations{Session: f, Namespace: "ns-demo"}
-			if _, e := o.CreateApp(appConfig(), api, false, 0); e != nil {
-				t.Fatal(e)
-			}
-			if f.writes != 0 {
-				t.Fatal("creation preview wrote")
-			}
-			if _, e := o.CreateApp(appConfig(), api, true, 0); e != nil {
-				t.Fatal(e)
-			}
-			if f.writes != 1 {
-				t.Fatal("wrong write count")
-			}
-			if _, e := o.CreateApp(appConfig(), api, true, 0); e == nil {
-				t.Fatal("existing app should not be overwritten")
-			}
-			if f.writes != 1 {
-				t.Fatal("duplicate create wrote")
-			}
-			if _, e := o.CreateDB(dbConfig(), api, false, 0); e != nil {
-				t.Fatal(e)
-			}
-			if f.writes != 1 {
-				t.Fatal("db preview wrote")
-			}
-			if _, e := o.CreateDB(dbConfig(), api, true, 0); e != nil {
-				t.Fatal(e)
-			}
-			if f.writes != 2 {
-				t.Fatal("wrong db write count")
-			}
-		})
+func TestCreationPreviewAndApply(t *testing.T) {
+	f := &fakeProvider{}
+	o := Operations{Session: f, Namespace: "ns-demo"}
+	if _, e := o.CreateApp(appConfig(), false, 0); e != nil {
+		t.Fatal(e)
+	}
+	if f.writes != 0 {
+		t.Fatal("creation preview wrote")
+	}
+	if _, e := o.CreateApp(appConfig(), true, 0); e != nil {
+		t.Fatal(e)
+	}
+	if f.writes != 1 {
+		t.Fatal("wrong write count")
+	}
+	if _, e := o.CreateApp(appConfig(), true, 0); e == nil {
+		t.Fatal("existing app should not be overwritten")
+	}
+	if f.writes != 1 {
+		t.Fatal("duplicate create wrote")
+	}
+	if _, e := o.CreateDB(dbConfig(), false, 0); e != nil {
+		t.Fatal(e)
+	}
+	if f.writes != 1 {
+		t.Fatal("db preview wrote")
+	}
+	if _, e := o.CreateDB(dbConfig(), true, 0); e != nil {
+		t.Fatal(e)
+	}
+	if f.writes != 2 {
+		t.Fatal("wrong db write count")
 	}
 }
-func TestIncompleteOpenAPIListDoesNotHideApps(t *testing.T) {
+func TestAppInventoryPreservesComplexApps(t *testing.T) {
 	f := &fakeProvider{work: fixture()}
 	o := Operations{Session: f, Namespace: "ns-demo"}
-	result, e := o.Apps(true)
+	result, e := o.Apps()
 	if e != nil {
 		t.Fatal(e)
 	}
-	if len(arr(result["items"])) != 1 || len(result["missingFromOpenapi"].([]string)) != 1 {
-		t.Fatal("OpenAPI omission hid an app")
+	if len(arr(result["items"])) != 1 || at(arr(result["items"])[0], "multiContainer") != true {
+		t.Fatal("complex app missing from inventory")
 	}
 }
 func TestWaitDoesNotReportStaleReadyReplicas(t *testing.T) {

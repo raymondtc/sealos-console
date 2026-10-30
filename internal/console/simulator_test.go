@@ -49,32 +49,35 @@ func TestCLIEndToEndAgainstLocalHTTP(t *testing.T) {
 		return result
 	}
 	invoke("demo\n", "auth", "login", "--url", base, "--username", "demo", "--password-stdin", "--workspace", "ns-demo", "--local-test")
-	list := invoke("", "app", "list", "--compare")
-	if list["simulation"] != true || len(arr(list["missingFromOpenapi"])) != 1 {
-		t.Fatal("simulation or omission diagnostics missing")
+	list := invoke("", "app", "list")
+	if list["simulation"] != true || len(arr(list["items"])) != 2 {
+		t.Fatal("simulation flag or complete inventory missing")
 	}
 	out := invoke("", "app", "upgrade", "worker", "--container", "sidecar", "--image", "busybox:1.37.0", "--execute", "--wait", "1")
 	if out["state"] != "image-updated-and-verified" {
 		t.Fatal("complex upgrade not verified")
 	}
-	for _, api := range []string{"console", "openapi"} {
+	for _, name := range []string{"created-app", "created-stateful"} {
 		config := appConfig()
-		config["name"] = "created-" + api
+		config["name"] = name
+		if name == "created-stateful" {
+			config["storage"] = []any{Object{"name": "data", "path": "/data", "sizeGi": float64(1)}}
+		}
 		b, _ := json.Marshal(config)
-		preview := invoke(string(b), "app", "create", "--file", "-", "--api", api)
+		preview := invoke(string(b), "app", "create", "--file", "-")
 		if preview["executed"] != false {
 			t.Fatal("preview executed")
 		}
-		created := invoke(string(b), "app", "create", "--file", "-", "--api", api, "--execute", "--wait", "1")
+		created := invoke(string(b), "app", "create", "--file", "-", "--execute", "--wait", "1")
 		if created["simulation"] != true || created["state"] != "created-and-visible" {
 			t.Fatal("creation not observed")
 		}
 		db := dbConfig()
-		db["name"] = "db-" + api
+		db["name"] = "db-" + name
 		dbBytes, _ := json.Marshal(db)
-		invoke(string(dbBytes), "db", "create", "--file", "-", "--api", api, "--execute", "--wait", "1")
+		invoke(string(dbBytes), "db", "create", "--file", "-", "--execute", "--wait", "1")
 	}
-	invoke("", "app", "upgrade", "web", "--image", "nginx:1.27.5", "--api", "openapi", "--execute", "--wait", "1")
+	invoke("", "app", "upgrade", "web", "--image", "nginx:1.27.5", "--execute", "--wait", "1")
 	invoke("", "doctor")
 }
 func TestSimulatorConflictAndTimeoutAfterCommit(t *testing.T) {
@@ -87,7 +90,7 @@ func TestSimulatorConflictAndTimeoutAfterCommit(t *testing.T) {
 			if fault == "timeout-after-write" {
 				s.HTTP.Client.Timeout = 20 * time.Millisecond
 			}
-			_, err := o.Upgrade("web", "nginx:1.27.5", "", "console", true, 0)
+			_, err := o.Upgrade("web", "nginx:1.27.5", "", true, 0)
 			if err == nil {
 				t.Fatal("expected injected fault")
 			}
