@@ -15,13 +15,55 @@ This is an independent client, not an official Sealos project. This release is a
 
 ## Install
 
-Download an archive from [Releases](https://github.com/raymondtc/sealos-console/releases), verify it against `checksums.txt`, and put the binary on your PATH. Windows packages contain `sealos-console.exe`.
+Use the installer to download a matching prebuilt binary and verify its SHA-256 checksum. **Go is not required.**
 
-Or use Go 1.23+:
+macOS / Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/raymondtc/sealos-console/main/install.sh -o install-sealos-console.sh
+sh install-sealos-console.sh
+# If ~/.local/bin is not already on PATH:
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Windows PowerShell:
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/raymondtc/sealos-console/main/install.ps1 -OutFile install-sealos-console.ps1
+.\install-sealos-console.ps1
+# Add the default install directory for this session:
+$env:Path = "$env:LOCALAPPDATA\sealos-console\bin;$env:Path"
+```
+
+The scripts default to their associated release, including prereleases. Rerun the current script to upgrade. Select a release/directory with `--version v0.5.0 --install-dir DIR`, or PowerShell `-Version v0.5.0 -InstallDir DIR`. They do not edit shell startup files or login profiles. Inspect the downloaded script before running it; tagged scripts are also available in [Releases](https://github.com/raymondtc/sealos-console/releases).
+
+Manual archives remain available for macOS/Linux/Windows amd64 and arm64. Developers can alternatively build with Go 1.23+:
 
 ```sh
 go install github.com/raymondtc/sealos-console/cmd/sealos-console@latest
 ```
+
+## Install the agent skill
+
+The CLI delegates skill management to the pinned [Vercel skills CLI](https://github.com/vercel-labs/skills), using its harness support and installation rules. **Only these skill-management commands require Node.js 22.20+ and npm/npx.** Normal Sealos commands and the binary installer do not.
+
+```sh
+sealos-console skill install --agent codex
+sealos-console skill install --agent claude-code --agent cursor
+sealos-console skill install --agent gemini-cli,github-copilot,opencode,windsurf
+sealos-console skill status
+
+# After upgrading the CLI, refresh its matching skill:
+sealos-console skill update --agent codex --agent claude-code
+
+# Scope defaults to global; project scope uses the current directory:
+sealos-console skill install --agent cursor --scope project
+sealos-console skill uninstall --scope project
+```
+
+Install/update require explicit agent IDs; paths and supported IDs are maintained upstream, not duplicated in this client. Files are copied using `skills add --copy`, from this CLI's release tag. `skill update` refreshes **only sealos-console** to that matching release; it does not run a bulk update. `skill uninstall` removes **only sealos-console** from all harnesses in the selected scope. Per-harness uninstall is deliberately unsupported because several harnesses share the same skills directory. Other skills and Sealos login profiles are preserved. Upstream overwrite behavior applies to manual edits of this skill; back up edits first.
+
+Use `--dry-run` to print the exact command without running Node or changing files. Status is filtered to this skill. See [installation design and limits](docs/installation.md) for dependency details, shared-directory behavior and migration from manual copies.
 
 ## Try it locally
 
@@ -227,7 +269,7 @@ Desktop and providers can be upgraded independently. API versions and Next.js bu
 
 ## Agent skill
 
-The reusable skill is in [skills/sealos-console](skills/sealos-console/SKILL.md). Install/copy that directory into your agent's skill directory and make the CLI available on PATH. A `sealos-console-skill.zip` is included with releases. It contains generic instructions and examples, not credentials or deployment-specific configuration.
+The reusable skill is in [skills/sealos-console](skills/sealos-console/SKILL.md). Prefer `sealos-console skill install --agent AGENT` after installing the CLI with the script above. A `sealos-console-skill.zip` is included with releases. It contains generic instructions and examples, not credentials or deployment-specific configuration.
 
 ## Development and release
 
@@ -235,7 +277,7 @@ The reusable skill is in [skills/sealos-console](skills/sealos-console/SKILL.md)
 go test -race ./...
 go vet ./...
 go build -trimpath -o bin/sealos-console ./cmd/sealos-console
-go run ./scripts/release.go --version v0.4.0
+go run ./scripts/release.go --version v0.5.0
 ```
 
 Tests cover console operations, an actual local HTTP simulator, multi-container preservation, Downward API references, workspace checks, business errors, redirects, conflict handling and timeout-after-commit behavior. The release builder produces six archives, a skill archive and SHA-256 checksums without embedding local source paths.

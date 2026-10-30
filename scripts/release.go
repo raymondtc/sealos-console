@@ -84,7 +84,7 @@ func pack(path string, files map[string]string, zipFormat bool) error {
 	return gz.Close()
 }
 func main() {
-	version := flag.String("version", "", "Release version, for example v0.4.0")
+	version := flag.String("version", "", "Release version, for example v0.5.0")
 	out := flag.String("out", "dist", "Output directory")
 	flag.Parse()
 	if !regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9.]+)?$`).MatchString(*version) {
@@ -134,6 +134,13 @@ func main() {
 		return nil
 	}))
 	must(pack(filepath.Join(*out, "sealos-console-skill.zip"), skill, true))
+	for _, name := range []string{"install.sh", "install.ps1"} {
+		b, e := os.ReadFile(name)
+		must(e)
+		// A tagged installer always defaults to that release.
+		b = []byte(strings.ReplaceAll(string(b), "v0.5.0", *version))
+		must(os.WriteFile(filepath.Join(*out, name), b, 0644))
+	}
 	entries, err := os.ReadDir(*out)
 	must(err)
 	checks := []string{}

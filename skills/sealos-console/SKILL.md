@@ -5,7 +5,9 @@ description: Operate Sealos applications and managed databases through console A
 
 # Sealos console operations
 
-Use the `sealos-console` Go CLI on PATH. If absent, install a matching binary from <https://github.com/raymondtc/sealos-console/releases> or build with `go install github.com/raymondtc/sealos-console/cmd/sealos-console@latest`. Do not substitute the unrelated cluster lifecycle `sealos` CLI.
+Use `sealos-console` on PATH. If absent, prefer the project's prebuilt installer: download <https://raw.githubusercontent.com/raymondtc/sealos-console/main/install.sh> for macOS/Linux or <https://raw.githubusercontent.com/raymondtc/sealos-console/main/install.ps1> for Windows, then run it. The installer verifies the release checksum and does not require Go. Manual release archives and Go source builds are fallbacks. Do not substitute the unrelated cluster lifecycle `sealos` CLI.
+
+The CLI provides `skill install|update --agent AGENT`, `skill status`, and `skill uninstall`. These delegate to Vercel `skills` and require Node.js >=22.20 with npm; normal platform operations do not. Scope defaults to global; use `--scope project` when the user requests a project-local installation. Install/update require explicit harness IDs, for example `codex`, `claude-code` or `cursor`. Updates install the running CLI release's skill, so upgrade the CLI first. Uninstall removes only this skill across harnesses within the chosen scope; shared directories prevent per-harness uninstall. `--dry-run` previews the exact command. Do not reinstall or manage other skills merely to perform a platform operation.
 
 ## Select the target
 

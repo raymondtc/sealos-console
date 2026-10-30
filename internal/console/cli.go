@@ -17,6 +17,8 @@ import (
 const help = `sealos-console — Sealos console API client
 
 Usage:
+  sealos-console skill install|update --agent AGENT [--agent AGENT] [--scope global|project] [--dry-run]
+  sealos-console skill uninstall|status [--scope global|project] [--dry-run]
   sealos-console mock serve [--listen 127.0.0.1:8787] [--fault conflict|timeout-after-write]
   sealos-console auth login --url https://cloud.example.com --username USER --password-stdin
   sealos-console auth status | auth logout | workspace list | doctor
@@ -41,12 +43,16 @@ Common flags (may appear before or after the command):
   --json               Output is JSON; followed logs emit one JSON object per line
   --local-test         Login to a loopback-only mock server (never a remote host)
 
-Writes default to a read-only preview. --execute sends the mutation.
+Platform writes default to a read-only preview. --execute sends the mutation.
+Skill commands act locally immediately; use --dry-run to preview. Node.js >=22.20 + npm required.
 No CPU/configuration updates, deletion, credential export or direct Kubernetes access.
 Use SEALOS_PASSWORD or --password-stdin; passwords are not accepted in command arguments.
 `
 
 type options struct {
+	agents                                                     agentFlags
+	scope                                                      string
+	dryRun                                                     bool
 	profile, workspace, base, username, file, image, container string
 	listen, fault                                              string
 	pod, since, metric, prefix, nextToken, output              string
@@ -61,6 +67,9 @@ func parse(args []string) (options, []string, error) {
 	var o options
 	f := flag.NewFlagSet("sealos-console", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
+	f.Var(&o.agents, "agent", "")
+	f.StringVar(&o.scope, "scope", "global", "")
+	f.BoolVar(&o.dryRun, "dry-run", false, "")
 	f.StringVar(&o.pod, "pod", "", "")
 	f.StringVar(&o.since, "since", "1h", "")
 	f.StringVar(&o.metric, "metric", "cpu", "")
@@ -89,7 +98,7 @@ func parse(args []string) (options, []string, error) {
 	f.BoolVar(&o.version, "version", false, "")
 	f.IntVar(&o.wait, "wait", 0, "")
 	f.IntVar(&o.timeout, "timeout", 120, "")
-	bools := map[string]bool{"follow": true, "previous": true, "password-stdin": true, "execute": true, "json": true, "help": true, "h": true, "version": true, "local-test": true}
+	bools := map[string]bool{"dry-run": true, "follow": true, "previous": true, "password-stdin": true, "execute": true, "json": true, "help": true, "h": true, "version": true, "local-test": true}
 	flags, pos := []string{}, []string{}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -156,7 +165,7 @@ func commandShape(pos []string) error {
 		return fail("INPUT", "A command is required; use --help.")
 	}
 	key := pos[0] + " " + pos[1]
-	counts := map[string]int{"app pods": 3, "app logs": 3, "app events": 3, "app stats": 3, "app metrics": 3, "db pods": 3, "db logs": 3, "db events": 3, "db metrics": 3, "storage connect": 2, "storage buckets": 2, "storage bucket": 3, "storage create": 3, "storage ls": 3, "storage upload": 4, "storage download": 4, "auth login": 2, "auth status": 2, "auth logout": 2, "workspace list": 2, "app domains": 2, "app list": 2, "app get": 3, "app create": 2, "app upgrade": 3, "app wait": 3, "db list": 2, "db get": 3, "db engines": 2, "db create": 2}
+	counts := map[string]int{"skill install": 2, "skill update": 2, "skill uninstall": 2, "skill status": 2, "app pods": 3, "app logs": 3, "app events": 3, "app stats": 3, "app metrics": 3, "db pods": 3, "db logs": 3, "db events": 3, "db metrics": 3, "storage connect": 2, "storage buckets": 2, "storage bucket": 3, "storage create": 3, "storage ls": 3, "storage upload": 4, "storage download": 4, "auth login": 2, "auth status": 2, "auth logout": 2, "workspace list": 2, "app domains": 2, "app list": 2, "app get": 3, "app create": 2, "app upgrade": 3, "app wait": 3, "db list": 2, "db get": 3, "db engines": 2, "db create": 2}
 	if n, ok := counts[key]; !ok || len(pos) != n {
 		return fail("INPUT", "Unknown command or incorrect positional arguments; use --help.")
 	}
@@ -347,7 +356,11 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, version strin
 	}
 	var result any
 	if err == nil {
-		result, err = run(o, pos, stdin)
+		if len(pos) > 0 && pos[0] == "skill" {
+			result, err = runSkill(o, pos, version, stderr)
+		} else {
+			result, err = run(o, pos, stdin)
+		}
 	}
 	if err != nil {
 		_ = json.NewEncoder(stderr).Encode(Object{"error": publicFailure(err)})
