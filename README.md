@@ -35,7 +35,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install-sealos-console.ps1
 $env:Path = "$env:LOCALAPPDATA\sealos-console\bin;$env:Path"
 ```
 
-The Windows example applies its execution-policy option only to that process. The scripts default to their associated release, including prereleases. Rerun the current script to upgrade. Select a release/directory with `--version v0.5.0 --install-dir DIR`, or PowerShell `-Version v0.5.0 -InstallDir DIR`. They do not edit shell startup files or login profiles. Inspect the downloaded script before running it; tagged scripts are also available in [Releases](https://github.com/raymondtc/sealos-console/releases).
+The Windows example applies its execution-policy option only to that process. The scripts default to their associated release, including prereleases. Rerun the current script to upgrade. Select a release/directory with `--version v0.5.1 --install-dir DIR`, or PowerShell `-Version v0.5.1 -InstallDir DIR`. They do not edit shell startup files or login profiles. Inspect the downloaded script before running it; tagged scripts are also available in [Releases](https://github.com/raymondtc/sealos-console/releases).
 
 Manual archives remain available for macOS/Linux/Windows amd64 and arm64. Developers can alternatively build with Go 1.23+:
 
@@ -187,6 +187,8 @@ sealos-console --workspace YOUR_NAMESPACE app upgrade worker \
 
 The client reads the raw managed workload, changes exactly one image and preserves the entire containers array (JSON Merge Patch replaces arrays). It sends the read `resourceVersion` as a concurrency precondition, re-reads before writing, and verifies the resulting workload spec afterward. No environment values are printed in plans or summaries.
 
+**Persistent storage requires v0.5.1 or later.** Older clients omitted the console's `stateFulSetYaml` preservation document; the provider can interpret this omission as removing app-owned PVCs even for an image-only update. Version 0.5.1 supplies the existing StatefulSet claim templates unchanged. It refuses upgrades with explicit PVC references or missing/ambiguous console storage annotations, where safe reconciliation cannot be inferred. Upgrade the CLI before updating images on persistent apps.
+
 No automatic retry or rollback is performed after a failed/uncertain write. Cross-registry updates with existing pull secrets require a separate credential workflow and are refused.
 
 `--wait SECONDS` waits for observed generation and updated/ready replicas. Without it, a successful write verifies configuration and platform visibility, not workload health.
@@ -277,7 +279,7 @@ The reusable skill is in [skills/sealos-console](skills/sealos-console/SKILL.md)
 go test -race ./...
 go vet ./...
 go build -trimpath -o bin/sealos-console ./cmd/sealos-console
-go run ./scripts/release.go --version v0.5.0
+go run ./scripts/release.go --version v0.5.1
 ```
 
 Tests cover console operations, an actual local HTTP simulator, multi-container preservation, Downward API references, workspace checks, business errors, redirects, conflict handling and timeout-after-commit behavior. The release builder produces six archives, a skill archive and SHA-256 checksums without embedding local source paths.

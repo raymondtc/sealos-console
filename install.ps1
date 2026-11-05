@@ -1,7 +1,7 @@
 # Install the prebuilt Windows CLI. Run with PowerShell 5.1 or later.
 [CmdletBinding()]
 param(
-    [string]$Version = $(if ($env:SEALOS_CONSOLE_VERSION) { $env:SEALOS_CONSOLE_VERSION } else { 'v0.5.0' }),
+    [string]$Version = $(if ($env:SEALOS_CONSOLE_VERSION) { $env:SEALOS_CONSOLE_VERSION } else { 'v0.5.1' }),
     [string]$InstallDir = $(if ($env:SEALOS_CONSOLE_INSTALL_DIR) { $env:SEALOS_CONSOLE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'sealos-console\bin' })
 )
 $ErrorActionPreference = 'Stop'

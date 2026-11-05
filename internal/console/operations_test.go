@@ -16,6 +16,7 @@ type fakeProvider struct {
 	damage    bool
 	dbCreated bool
 	lastBody  Object
+	pvcs      []Object
 }
 
 func (f *fakeProvider) Provider(service, method, path string, body any, envelope bool) (any, error) {
@@ -50,6 +51,20 @@ func (f *fakeProvider) Provider(service, method, path string, body any, envelope
 		}
 		switch path {
 		case "/api/updateApp":
+			// Match the console's pre-patch PVC reconciliation: missing templates
+			// delete app-owned claims even when the workload patch is image-only.
+			var stateful Object
+			_ = json.Unmarshal([]byte(str(at(body, "stateFulSetYaml"))), &stateful)
+			retained := []Object{}
+			for _, pvc := range f.pvcs {
+				for _, claim := range arr(at(stateful, "spec", "volumeClaimTemplates")) {
+					if at(claim, "metadata", "annotations", "path") == at(pvc, "metadata", "annotations", "path") {
+						retained = append(retained, pvc)
+						break
+					}
+				}
+			}
+			f.pvcs = retained
 			patch := at(arr(at(body, "patch"))[0], "value")
 			if at(patch, "metadata", "resourceVersion") != at(f.work, "metadata", "resourceVersion") {
 				return nil, fail("CONFLICT", "version conflict")
@@ -72,6 +87,60 @@ func (f *fakeProvider) Provider(service, method, path string, body any, envelope
 		}
 	}
 	return nil, fail("TEST", "Unexpected route %s %s", method, path)
+}
+
+func TestStatefulImageUpgradeRetainsProviderPVCs(t *testing.T) {
+	w := fixture()
+	w["kind"] = "StatefulSet"
+	claims := []any{}
+	pvcs := []Object{}
+	for _, path := range []string{"/data", "/uploads"} {
+		claims = append(claims, Object{"metadata": Object{"annotations": Object{"path": path, "value": "5"}}, "spec": Object{"resources": Object{"requests": Object{"storage": "5Gi"}}}})
+		pvcs = append(pvcs, Object{"metadata": Object{"annotations": Object{"path": path, "value": "5"}}, "data": "must-survive"})
+	}
+	obj(w["spec"])["volumeClaimTemplates"] = claims
+	f := &fakeProvider{work: w, pvcs: pvcs}
+	o := Operations{Session: f, Namespace: "ns-demo"}
+	if _, err := o.Upgrade("demo", "registry.example.com/demo:v2", "main", true, 0); err != nil {
+		t.Fatal(err)
+	}
+	if !sameJSON(f.pvcs, pvcs) {
+		t.Fatal("console PVC reconciliation deleted persistent application data")
+	}
+	var supplied Object
+	if err := json.Unmarshal([]byte(str(f.lastBody["stateFulSetYaml"])), &supplied); err != nil {
+		t.Fatal(err)
+	}
+	if !sameJSON(at(supplied, "spec", "volumeClaimTemplates"), claims) {
+		t.Fatal("storage templates changed during image upgrade")
+	}
+	if at(arr(at(supplied, "spec", "template", "spec", "containers"))[0], "image") != "registry.example.com/demo:v2" {
+		t.Fatal("StatefulSet preservation document has stale image")
+	}
+}
+
+func TestUnsafeStorageUpgradeRefusesBeforeProviderWrite(t *testing.T) {
+	for _, mode := range []string{"explicit-pvc", "missing-claims", "missing-annotations", "duplicate-paths"} {
+		t.Run(mode, func(t *testing.T) {
+			w := fixture()
+			if mode == "explicit-pvc" {
+				obj(at(w, "spec", "template", "spec"))["volumes"] = []any{Object{"name": "data", "persistentVolumeClaim": Object{"claimName": "shared"}}}
+			} else {
+				w["kind"] = "StatefulSet"
+				if mode == "missing-annotations" {
+					obj(w["spec"])["volumeClaimTemplates"] = []any{Object{"metadata": Object{"name": "data"}}}
+				} else if mode == "duplicate-paths" {
+					claim := Object{"metadata": Object{"annotations": Object{"path": "/data", "value": "5"}}}
+					obj(w["spec"])["volumeClaimTemplates"] = []any{claim, clone(claim)}
+				}
+			}
+			f := &fakeProvider{work: w}
+			_, err := (Operations{Session: f, Namespace: "ns-demo"}).Upgrade("demo", "registry.example.com/demo:v2", "main", true, 0)
+			if err == nil || f.writes != 0 {
+				t.Fatal("unsafe storage reconciliation was not refused before writing")
+			}
+		})
+	}
 }
 func TestUpgradePreviewAndApply(t *testing.T) {
 	f := &fakeProvider{work: fixture()}

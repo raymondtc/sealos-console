@@ -55,6 +55,8 @@ sealos-console --workspace NAMESPACE app upgrade APP \
 
 Console reads the raw workload and sends one image-only patch to `/api/updateApp`, preserving every container and nested field. It includes resourceVersion and verifies the spec after writing. Unknown server builds, especially StatefulSet fallback behavior, still need acceptance testing.
 
+Persistent apps require CLI v0.5.1 or later. The provider reconciles PVCs using the separate `stateFulSetYaml` field before patching workloads; omitting it can delete app-owned PVCs. The CLI now supplies the existing annotated StatefulSet claim templates unchanged. Upgrades with explicit PVC references, missing templates, or missing/duplicate path and size annotations are refused before writing because storage preservation cannot be established. Versions through v0.5.0 must not be used to upgrade persistent apps.
+
 Same-image upgrades are no-ops. Cross-registry changes with existing pull secrets are refused. Failed writes are never retried automatically. `WRITE_UNVERIFIED` means a write may have succeeded but read-back did not establish the expected state; inspect before doing anything else.
 
 ## Version and test boundaries

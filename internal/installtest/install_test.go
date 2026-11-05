@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-const version = "v0.5.0"
+const version = "v0.5.1"
 
 // The test executable doubles as a release fixture, without a compiler on the
 // installer path. This branch is reached only by the fixture's --version call.
@@ -93,7 +93,7 @@ function Invoke-WebRequest {
  param($Uri,$OutFile,$TimeoutSec,[switch]$UseBasicParsing)
  [System.IO.File]::Copy((Join-Path $env:SEALOS_INSTALL_FIXTURES ([System.IO.Path]::GetFileName($Uri))),$OutFile)
 }
-& $env:SEALOS_INSTALL_SCRIPT -Version 'v0.5.0' -InstallDir $env:SEALOS_INSTALL_TARGET
+& $env:SEALOS_INSTALL_SCRIPT -Version 'v0.5.1' -InstallDir $env:SEALOS_INSTALL_TARGET
 `
 		os.WriteFile(wrapper, []byte(code), 0644)
 		args = []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", wrapper}

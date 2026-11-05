@@ -414,7 +414,37 @@ func ImageUpdate(work Object, target, container string) (Object, Object, error) 
 		metadata["annotations"] = Object{"originImageName": target}
 	}
 	patch := Object{"metadata": metadata, "spec": Object{"template": Object{"spec": Object{"containers": updated}}}}
-	return Object{"appName": meta["name"], "patch": []any{Object{"type": "patch", "kind": kind, "value": patch}}}, diff, nil
+	body := Object{"appName": meta["name"], "patch": []any{Object{"type": "patch", "kind": kind, "value": patch}}}
+	// updateApp reconciles PVCs before applying the image patch. Omitted
+	// stateFulSetYaml is interpreted as removing every app-owned volume.
+	// Explicit PVC references cannot be safely reconciled from a workload alone.
+	for _, volume := range arr(at(work, "spec", "template", "spec", "volumes")) {
+		if at(volume, "persistentVolumeClaim") != nil {
+			return nil, nil, fail("UNSUPPORTED", "Image upgrades with explicit PVC references require storage reconciliation that this client cannot safely infer.")
+		}
+	}
+	if kind == "StatefulSet" {
+		claims := arr(at(work, "spec", "volumeClaimTemplates"))
+		if len(claims) == 0 {
+			return nil, nil, fail("UNSUPPORTED", "StatefulSet image upgrades require console-annotated volume claim templates.")
+		}
+		paths := map[string]bool{}
+		for _, claim := range claims {
+			path := str(at(claim, "metadata", "annotations", "path"))
+			if path == "" || paths[path] || str(at(claim, "metadata", "annotations", "value")) == "" {
+				return nil, nil, fail("UNSUPPORTED", "Volume claim templates need unique console path annotations and size annotations; refusing unsafe PVC reconciliation.")
+			}
+			paths[path] = true
+		}
+		stateful := obj(clone(work))
+		obj(at(stateful, "spec", "template", "spec"))["containers"] = updated
+		serialized, err := json.Marshal(stateful) // JSON is also valid YAML.
+		if err != nil {
+			return nil, nil, fail("INPUT", "Cannot encode StatefulSet storage preservation data.")
+		}
+		body["stateFulSetYaml"] = string(serialized)
+	}
+	return body, diff, nil
 }
 
 func sameJSON(a, b any) bool { return reflect.DeepEqual(clone(a), clone(b)) }
