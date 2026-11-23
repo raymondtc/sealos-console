@@ -36,6 +36,18 @@ Usage:
   sealos-console storage download BUCKET KEY --output NEW_PATH
   sealos-console db list | db get NAME | db engines
   sealos-console db create --file database.json [--execute] [--wait 120]
+  sealos-console devbox connect [--execute]
+  sealos-console devbox template list [--scope official|public|private] [--search TEXT] [--page NUMBER]
+  sealos-console devbox template versions REPOSITORY_UID
+  sealos-console devbox template create NAME --from DEVBOX --tag RELEASE_TAG --template-version VERSION [--execute]
+  sealos-console devbox list | devbox get NAME | devbox wait NAME [--timeout SECONDS]
+  sealos-console devbox create NAME --template REPOSITORY_UID --template-version VERSION [--cpu-milli 2000] [--memory-mi 4096] [--storage-gi 10] [--port PORT [--public]] [--execute] [--wait SECONDS]
+  sealos-console devbox ports NAME
+  sealos-console devbox public on|off NAME --port PORT [--execute]
+  sealos-console devbox start NAME | devbox stop NAME --mode retain-port|release-port [--execute] [--wait SECONDS]
+  sealos-console devbox exec NAME [--execute] [--timeout SECONDS] [--json] -- COMMAND [ARGS...]
+  sealos-console devbox release list NAME | devbox release wait NAME --tag TAG [--timeout SECONDS]
+  sealos-console devbox release create NAME --tag TAG [--notes TEXT] [--execute] [--wait SECONDS]
 
 Common flags (may appear before or after the command):
   --profile NAME       Saved login profile (default: default)
@@ -61,6 +73,10 @@ type options struct {
 	passwordStdin, execute, json, help, version                bool
 	localTest                                                  bool
 	wait, timeout                                              int
+	template, templateVersion, from, tag, notes, mode, search  string
+	cpuMilli, memoryMi, storageGi, port, page                  int
+	public                                                     bool
+	command                                                    []string
 }
 
 func parse(args []string) (options, []string, error) {
@@ -98,12 +114,29 @@ func parse(args []string) (options, []string, error) {
 	f.BoolVar(&o.version, "version", false, "")
 	f.IntVar(&o.wait, "wait", 0, "")
 	f.IntVar(&o.timeout, "timeout", 120, "")
-	bools := map[string]bool{"dry-run": true, "follow": true, "previous": true, "password-stdin": true, "execute": true, "json": true, "help": true, "h": true, "version": true, "local-test": true}
+	f.StringVar(&o.template, "template", "", "")
+	f.StringVar(&o.templateVersion, "template-version", "", "")
+	f.StringVar(&o.from, "from", "", "")
+	f.StringVar(&o.tag, "tag", "", "")
+	f.StringVar(&o.notes, "notes", "", "")
+	f.StringVar(&o.mode, "mode", "", "")
+	f.StringVar(&o.search, "search", "", "")
+	f.IntVar(&o.page, "page", 1, "")
+	f.IntVar(&o.cpuMilli, "cpu-milli", 2000, "")
+	f.IntVar(&o.memoryMi, "memory-mi", 4096, "")
+	f.IntVar(&o.storageGi, "storage-gi", 10, "")
+	f.IntVar(&o.port, "port", 0, "")
+	f.BoolVar(&o.public, "public", false, "")
+	bools := map[string]bool{"dry-run": true, "follow": true, "previous": true, "password-stdin": true, "execute": true, "json": true, "help": true, "h": true, "version": true, "local-test": true, "public": true}
 	flags, pos := []string{}, []string{}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
-			pos = append(pos, args[i+1:]...)
+			if len(pos) >= 2 && pos[0] == "devbox" && pos[1] == "exec" {
+				o.command = args[i+1:]
+			} else {
+				pos = append(pos, args[i+1:]...)
+			}
 			break
 		}
 		if strings.HasPrefix(a, "-") && a != "-" {
@@ -164,6 +197,9 @@ func commandShape(pos []string) error {
 	if len(pos) < 2 {
 		return fail("INPUT", "A command is required; use --help.")
 	}
+	if pos[0] == "devbox" {
+		return devboxCommandShape(pos)
+	}
 	key := pos[0] + " " + pos[1]
 	counts := map[string]int{"skill install": 2, "skill update": 2, "skill uninstall": 2, "skill status": 2, "app pods": 3, "app logs": 3, "app events": 3, "app stats": 3, "app metrics": 3, "db pods": 3, "db logs": 3, "db events": 3, "db metrics": 3, "storage connect": 2, "storage buckets": 2, "storage bucket": 3, "storage create": 3, "storage ls": 3, "storage upload": 4, "storage download": 4, "auth login": 2, "auth status": 2, "auth logout": 2, "workspace list": 2, "app domains": 2, "app list": 2, "app get": 3, "app create": 2, "app upgrade": 3, "app wait": 3, "db list": 2, "db get": 3, "db engines": 2, "db create": 2}
 	if n, ok := counts[key]; !ok || len(pos) != n {
@@ -208,7 +244,7 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 			if e = profiles.Save(o.profile, s.Profile); e != nil {
 				return nil, e
 			}
-			return Object{"authenticated": true, "profile": o.profile, "url": s.Profile.URL, "workspace": s.Profile.Workspace, "simulation": s.Profile.LocalTest, "stored": "regional token only; no password or kubeconfig"}, nil
+			return Object{"authenticated": true, "profile": o.profile, "url": s.Profile.URL, "workspace": s.Profile.Workspace, "simulation": s.Profile.LocalTest, "stored": "regional token; no password or kubeconfig"}, nil
 		case "logout":
 			if e := profiles.Remove(o.profile); e != nil {
 				return nil, fail("CONFIG", "Cannot remove local session.")
@@ -250,6 +286,9 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 		return Object{"workspaces": rows}, e
 	}
 	writing := len(pos) > 1 && (pos[1] == "create" || pos[1] == "upgrade" || pos[1] == "upload" || pos[1] == "connect")
+	if pos[0] == "devbox" {
+		writing = devboxWrites(pos)
+	}
 	if err = s.Bind(o.workspace, writing); err != nil {
 		return nil, err
 	}
@@ -258,6 +297,9 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 	}
 	ops := Operations{Session: s, Namespace: s.Namespace}
 	wait := time.Duration(o.wait) * time.Second
+	if pos[0] == "devbox" {
+		return runDevbox(s, p, profiles, o, pos, wait)
+	}
 	if pos[0] == "storage" {
 		switch pos[1] {
 		case "buckets":
@@ -365,6 +407,13 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, version strin
 	if err != nil {
 		_ = json.NewEncoder(stderr).Encode(Object{"error": publicFailure(err)})
 		return 1
+	}
+	if stream, ok := result.(*devboxExecStream); ok {
+		code, err := stream.write(stdout)
+		if err != nil {
+			_ = json.NewEncoder(stderr).Encode(Object{"error": publicFailure(err)})
+		}
+		return code
 	}
 	if stream, ok := result.(*LogStream); ok {
 		defer stream.Close()

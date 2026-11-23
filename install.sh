@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install the prebuilt CLI. No Go, Node.js or administrator privileges required.
 set -eu
-version=${SEALOS_CONSOLE_VERSION:-v0.5.1}
+version=${SEALOS_CONSOLE_VERSION:-v0.6.0}
 install_dir=${SEALOS_CONSOLE_INSTALL_DIR:-"$HOME/.local/bin"}
 usage() {
   echo 'Usage: sh install.sh [--version vX.Y.Z] [--install-dir DIR]'

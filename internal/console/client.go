@@ -95,6 +95,15 @@ func NewTransport() *Transport {
 }
 
 func (t *Transport) Send(base, method, path, credential string, body any, envelope bool) (any, error) {
+	resp, err := t.request(t.Client, base, method, path, credential, "", body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return decodeResponse(resp, method, path, envelope)
+}
+
+func (t *Transport) request(client *http.Client, base, method, path, credential, bearer string, body any) (*http.Response, error) {
 	base, err := originFor(base, t.LocalTest)
 	if err != nil {
 		return nil, err
@@ -122,11 +131,17 @@ func (t *Transport) Send(base, method, path, credential string, body any, envelo
 	if credential != "" {
 		req.Header.Set("Authorization", strings.ReplaceAll(url.QueryEscape(credential), "+", "%20"))
 	}
-	resp, err := t.Client.Do(req)
+	if bearer != "" {
+		req.Header.Set("Authorization-Bearer", bearer)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fail("TRANSPORT", "Request failed or timed out; no retry sent. Inspect any in-flight write before retrying.")
 	}
-	defer resp.Body.Close()
+	return resp, nil
+}
+
+func decodeResponse(resp *http.Response, method, path string, envelope bool) (any, error) {
 	if resp.StatusCode == 204 {
 		return nil, nil
 	}
@@ -168,6 +183,7 @@ type Profile struct {
 	Workspace string                       `json:"workspace,omitempty"`
 	LocalTest bool                         `json:"localTest,omitempty"`
 	Storage   map[string]StorageCredential `json:"storage,omitempty"`
+	Devbox    map[string]string            `json:"devbox,omitempty"`
 }
 
 type Profiles struct{ Directory string }
@@ -253,11 +269,13 @@ func (p Profiles) Remove(name string) error {
 }
 
 type Session struct {
-	Profile    Profile
-	HTTP       *Transport
-	Namespace  string
-	kubeconfig string // Never serialized to disk or returned from CLI output.
-	providers  map[string]string
+	Profile      Profile
+	HTTP         *Transport
+	Namespace    string
+	kubeconfig   string // Never serialized to disk or returned from CLI output.
+	workspaceUID string
+	appToken     string // Desktop provider token for the bound workspace.
+	providers    map[string]string
 }
 
 func NewSession(p Profile, t *Transport) (*Session, error) {
@@ -363,6 +381,7 @@ func (s *Session) Bind(workspace string, writing bool) error {
 			return fail("PROTOCOL", "Workspace switch returned no token.")
 		}
 		s.Profile.Token = token
+		s.appToken = str(at(switched, "appToken"))
 	}
 	data, err := s.Desktop("GET", "/api/auth/getKubeconfig", nil)
 	if err != nil {
@@ -380,6 +399,7 @@ func (s *Session) Bind(workspace string, writing bool) error {
 	}
 	s.kubeconfig = kc
 	s.Namespace = ns
+	s.workspaceUID = str(selected["uid"])
 	return nil
 }
 func (s *Session) Providers() (map[string]string, error) {
@@ -398,7 +418,7 @@ func (s *Session) Providers() (map[string]string, error) {
 	found := map[string]string{}
 	for _, row := range rows {
 		key := str(at(row, "key"))
-		if key != "system-applaunchpad" && key != "system-dbprovider" && key != "system-objectstorage" {
+		if key != "system-applaunchpad" && key != "system-dbprovider" && key != "system-objectstorage" && key != "system-devbox" {
 			continue
 		}
 		base, e := originFor(str(at(row, "data", "url")), s.Profile.LocalTest)

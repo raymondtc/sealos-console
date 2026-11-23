@@ -7,6 +7,7 @@ A small, dependency-free Go CLI and agent skill for Sealos application operation
 - Update an image by **container name**, preserving sidecars, environment references, probes and mounts.
 - Inspect app/database Pods, logs, events and CPU/memory history; inspect all app container usage.
 - List/create object-storage buckets and list/upload/download objects through console-managed S3 access.
+- Create DevBoxes from templates, toggle public previews, run commands and publish releases.
 - Preview writes by default; use `--execute` to submit them.
 - Run an **in-memory local simulator** without Docker, Kubernetes, Node or Python.
 - macOS, Linux and Windows binaries for amd64 and arm64.
@@ -35,7 +36,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install-sealos-console.ps1
 $env:Path = "$env:LOCALAPPDATA\sealos-console\bin;$env:Path"
 ```
 
-The Windows example applies its execution-policy option only to that process. The scripts default to their associated release, including prereleases. Rerun the current script to upgrade. Select a release/directory with `--version v0.5.1 --install-dir DIR`, or PowerShell `-Version v0.5.1 -InstallDir DIR`. They do not edit shell startup files or login profiles. Inspect the downloaded script before running it; tagged scripts are also available in [Releases](https://github.com/raymondtc/sealos-console/releases).
+The Windows example applies its execution-policy option only to that process. The scripts default to their associated release, including prereleases. Rerun the current script to upgrade. Select a release/directory with `--version v0.6.0 --install-dir DIR`, or PowerShell `-Version v0.6.0 -InstallDir DIR`. They do not edit shell startup files or login profiles. Inspect the downloaded script before running it; tagged scripts are also available in [Releases](https://github.com/raymondtc/sealos-console/releases).
 
 Manual archives remain available for macOS/Linux/Windows amd64 and arm64. Developers can alternatively build with Go 1.23+:
 
@@ -225,6 +226,26 @@ Logs require an explicit Pod unless there is exactly one; multi-container app lo
 
 `--previous` reads the previous container instance. Follow mode uses the server's initial tail of up to 1000 lines regardless of `--tail`. Logs/event messages may contain application secrets and are not automatically redacted. Database connection metrics, deleted-Pod log search and alert management are outside this release. See [detailed observation behavior](skills/sealos-console/references/observe-storage.md).
 
+## DevBox
+
+Use the Console provider to inspect DevBoxes, create one from a specific template version, run a command inside it, publish an image, or turn a successful release into a private template. The provider must appear in the platform's installed apps.
+
+```sh
+sealos-console --workspace WORKSPACE devbox template list --search Python
+sealos-console --workspace WORKSPACE devbox connect --execute
+sealos-console --workspace WORKSPACE devbox template versions REPOSITORY_UID
+sealos-console --workspace WORKSPACE devbox create demo --template REPOSITORY_UID --template-version 3.12 --port 8080
+sealos-console --workspace WORKSPACE devbox create demo --template REPOSITORY_UID --template-version 3.12 --port 8080 --execute --wait 180
+sealos-console --workspace WORKSPACE devbox ports demo
+sealos-console --workspace WORKSPACE devbox public on demo --port 8080 --execute
+sealos-console --workspace WORKSPACE devbox public off demo --port 8080 --execute
+sealos-console --workspace WORKSPACE devbox exec demo --execute -- python3 --version
+sealos-console --workspace WORKSPACE devbox release create demo --tag v1.0.0 --execute --wait 300
+sealos-console --workspace WORKSPACE devbox template create demo-python --from demo --tag v1.0.0 --template-version v1.0.0 --execute
+```
+
+Run `devbox get`, `devbox release list`, and `devbox template list --scope private` to inspect results. See [DevBox operations](skills/sealos-console/references/devbox.md) for public preview URLs, workspace credentials, streaming output, and stop modes.
+
 ## Object storage
 
 ```sh
@@ -279,7 +300,7 @@ The reusable skill is in [skills/sealos-console](skills/sealos-console/SKILL.md)
 go test -race ./...
 go vet ./...
 go build -trimpath -o bin/sealos-console ./cmd/sealos-console
-go run ./scripts/release.go --version v0.5.1
+go run ./scripts/release.go --version v0.6.0
 ```
 
 Tests cover console operations, an actual local HTTP simulator, multi-container preservation, Downward API references, workspace checks, business errors, redirects, conflict handling and timeout-after-commit behavior. The release builder produces six archives, a skill archive and SHA-256 checksums without embedding local source paths.
