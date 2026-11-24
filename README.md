@@ -207,6 +207,8 @@ sealos-console --workspace YOUR_NAMESPACE db create \
 
 Choose an exact version returned by `db engines`. The database schema uses CPU cores, `memoryMi`, `storageGi`, `replicas` and an explicit `terminationPolicy` (`Delete` or `WipeOut`). `backupEnabled` defaults to false; true requests a daily 02:00 backup with seven-day retention.
 
+Use `db backup list|get|create|wait` for existing databases. Manual creation follows the Console's engine policy and previews by default. See the [backup command guide](skills/sealos-console/references/operations.md#database-backups).
+
 Database edits, engine upgrades, deletion and credential retrieval are not included.
 
 ## Logs and monitoring

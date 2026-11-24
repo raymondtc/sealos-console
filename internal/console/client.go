@@ -438,16 +438,24 @@ func (s *Session) Providers() (map[string]string, error) {
 	return found, nil
 }
 func (s *Session) Provider(service, method, path string, body any, envelope bool) (any, error) {
-	if s.kubeconfig == "" {
-		return nil, fail("CONFIG", "Bind a workspace before provider operations.")
-	}
-	services, err := s.Providers()
+	base, err := s.providerBase(service)
 	if err != nil {
 		return nil, err
 	}
+	return s.HTTP.Send(base, method, path, s.kubeconfig, body, envelope)
+}
+
+func (s *Session) providerBase(service string) (string, error) {
+	if s.kubeconfig == "" {
+		return "", fail("CONFIG", "Bind a workspace before provider operations.")
+	}
+	services, err := s.Providers()
+	if err != nil {
+		return "", err
+	}
 	base := services[service]
 	if base == "" {
-		return nil, fail("CONFIG", "Provider %s is unavailable.", service)
+		return "", fail("CONFIG", "Provider %s is unavailable.", service)
 	}
-	return s.HTTP.Send(base, method, path, s.kubeconfig, body, envelope)
+	return base, nil
 }

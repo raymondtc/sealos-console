@@ -46,6 +46,22 @@ Use the exact version returned by `db engines`, not an assumed version from this
 
 Console uses `/api/createDB` with `isEdit=false`, millicores and MiB. Engine versions come from the console endpoint `/api/platform/getVersion`; some server builds can return a fallback catalog on backend failure.
 
+## Database backups
+
+```sh
+sealos-console --workspace NAMESPACE db backup list DB
+sealos-console --workspace NAMESPACE db backup get DB BACKUP
+sealos-console --workspace NAMESPACE db backup create DB BACKUP --notes "before update"
+sealos-console --workspace NAMESPACE db backup create DB BACKUP --execute --wait 300
+sealos-console --workspace NAMESPACE db backup wait DB BACKUP --timeout 300
+```
+
+Choose an exact database and a unique DNS-style backup name. All commands use the database provider and the selected workspace. `list` shows the newest backups first. Both `get` and `wait` look up the exact backup in the same database-scoped list. Results include the phase, method, policy, type, timestamps, size and retention information when the provider supplies it.
+
+Manual creation checks the Console backup flag and picks the method and policy for the existing database engine. The provider maps PostgreSQL to `pg-basebackup`, MongoDB to `dump`, ApeCloud MySQL to `xtrabackup`, and Redis to `datafile`. Optional `--notes` takes up to 30 UTF-8 bytes. Use it for a non-sensitive remark. Expiration and retention are reported from the backup record when available.
+
+The preview reads the database, backup flag and scoped backup list. `--execute` submits one request via `POST /api/backup/create`. A successful submission reports `submitted`. With `--wait`, the CLI polls until `Completed` or returns an error for `Failed` or timeout. The CLI reads backup metadata from `GET /api/backup/getBackupList?dbName=DB` and ignores provider annotations and failure details. Inspect the named backup before any retry after a failed or uncertain submission.
+
 ## Image updates
 
 ```sh

@@ -35,6 +35,8 @@ For DevBox template discovery, creation, public previews, remote commands, relea
 
 Read [references/operations.md](references/operations.md) for input shapes and limitations.
 
+For database backups, use `db backup list DB` and `db backup get DB BACKUP` to inspect the selected workspace and database. `db backup create DB BACKUP` previews the manual operation. Add `--execute` only when authorized and use `--wait SECONDS` or `db backup wait DB BACKUP` to confirm `Completed`.
+
 Creation and upgrades preview by default. Inspect the plan, then add `--execute` when the user's existing authorization covers that exact target and operation. A request to develop/test tooling is not a request to mutate a production resource. Do not ask again for approval that the user has already provided.
 
 ```sh

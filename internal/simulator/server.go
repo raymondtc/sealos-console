@@ -109,6 +109,7 @@ type Server struct {
 	Delay             time.Duration
 	apps              map[string]object
 	dbs               map[string]object
+	backups           map[string]object
 	networks          map[string][]any
 	DisableHTTPS      bool
 	version           int
@@ -255,6 +256,9 @@ func (s *Server) route(method, path, credential string, body object) (int, any, 
 	if credential != s.credential {
 		a, b := bad(401, "Invalid mock provider credential.")
 		return respond(a, b)
+	}
+	if status, payload, mutation, handled := s.routeDBBackup(method, path, body); handled {
+		return status, payload, mutation
 	}
 	if status, payload, mutation, handled := s.observeAndStorage(method, path, body); handled {
 		return status, payload, mutation
