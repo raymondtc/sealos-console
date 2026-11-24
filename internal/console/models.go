@@ -342,8 +342,18 @@ func DBCreate(raw Object) (Object, error) {
 }
 
 func AppSummary(work Object) Object {
+	pod := obj(at(work, "spec", "template", "spec"))
+	containers := appContainerSummaries(pod["containers"])
+	detail := Object{"name": at(work, "metadata", "name"), "namespace": at(work, "metadata", "namespace"), "kind": work["kind"], "resourceVersion": at(work, "metadata", "resourceVersion"), "replicas": at(work, "spec", "replicas"), "readyReplicas": num(at(work, "status", "readyReplicas")), "containers": containers, "multiContainer": len(containers) > 1}
+	if len(arr(pod["initContainers"])) != 0 {
+		detail["initContainers"] = appContainerSummaries(pod["initContainers"])
+	}
+	return detail
+}
+
+func appContainerSummaries(rows any) []any {
 	containers := []any{}
-	for _, item := range arr(at(work, "spec", "template", "spec", "containers")) {
+	for _, item := range arr(rows) {
 		c := obj(item)
 		names, refs := []any{}, []any{}
 		for _, item := range arr(c["env"]) {
@@ -357,22 +367,29 @@ func AppSummary(work Object) Object {
 				refs = append(refs, r)
 			}
 		}
-		containers = append(containers, Object{"name": c["name"], "image": c["image"], "resources": c["resources"], "environmentNames": names, "references": refs})
+		summary := Object{"name": c["name"], "image": c["image"], "resources": c["resources"], "environmentNames": names, "references": refs}
+		from := []string{}
+		for _, source := range arr(c["envFrom"]) {
+			for _, kind := range []string{"configMapRef", "secretRef"} {
+				if at(source, kind) != nil {
+					from = append(from, kind)
+				}
+			}
+		}
+		if len(from) != 0 {
+			summary["environmentFrom"] = from
+		}
+		containers = append(containers, summary)
 	}
-	return Object{"name": at(work, "metadata", "name"), "namespace": at(work, "metadata", "namespace"), "kind": work["kind"], "resourceVersion": at(work, "metadata", "resourceVersion"), "replicas": at(work, "spec", "replicas"), "readyReplicas": num(at(work, "status", "readyReplicas")), "containers": containers, "multiContainer": len(containers) > 1}
+	return containers
 }
 
 func ImageUpdate(work Object, target, container string) (Object, Object, error) {
 	if e := validImage(target); e != nil {
 		return nil, nil, e
 	}
-	kind := str(work["kind"])
-	if kind != "Deployment" && kind != "StatefulSet" {
-		return nil, nil, fail("UNSUPPORTED", "Only Deployments and StatefulSets can be upgraded.")
-	}
-	meta := obj(work["metadata"])
-	if str(at(meta, "labels", ManagerLabel)) != str(meta["name"]) {
-		return nil, nil, fail("UNSUPPORTED", "Workload manager label must match its name.")
+	if err := managedAppWorkload(work); err != nil {
+		return nil, nil, err
 	}
 	cs := arr(at(work, "spec", "template", "spec", "containers"))
 	if len(cs) == 0 {
@@ -402,49 +419,76 @@ func ImageUpdate(work Object, target, container string) (Object, Object, error) 
 	if old == target {
 		return nil, diff, nil
 	}
-	rv := str(meta["resourceVersion"])
-	if rv == "" {
-		return nil, nil, fail("PROTOCOL", "No resourceVersion; refusing an unguarded array replacement.")
-	}
 	// JSON Merge Patch replaces the containers array. Preserve its entire original contents.
 	updated := arr(clone(cs))
 	obj(updated[idx])["image"] = target
-	metadata := Object{"name": meta["name"], "namespace": meta["namespace"], "resourceVersion": rv}
+	originImage := ""
 	if idx == 0 {
-		metadata["annotations"] = Object{"originImageName": target}
+		originImage = target
 	}
-	patch := Object{"metadata": metadata, "spec": Object{"template": Object{"spec": Object{"containers": updated}}}}
+	body, err := appUpdateBody(work, Object{"containers": updated}, originImage)
+	return body, diff, err
+}
+
+func managedAppWorkload(work Object) error {
+	if kind := str(work["kind"]); kind != "Deployment" && kind != "StatefulSet" {
+		return fail("UNSUPPORTED", "Only Deployments and StatefulSets can be updated.")
+	}
+	name := str(at(work, "metadata", "name"))
+	if name == "" || at(work, "metadata", "labels", ManagerLabel) != name {
+		return fail("UNSUPPORTED", "Workload manager label must match its name.")
+	}
+	return nil
+}
+
+func appUpdateBody(work, podPatch Object, originImage string) (Object, error) {
+	kind := str(work["kind"])
+	meta := obj(work["metadata"])
+	rv := str(meta["resourceVersion"])
+	if rv == "" {
+		return nil, fail("PROTOCOL", "No resourceVersion; refusing an unguarded array replacement.")
+	}
+	metadata := Object{"name": meta["name"], "namespace": meta["namespace"], "resourceVersion": rv}
+	if originImage != "" {
+		metadata["annotations"] = Object{"originImageName": originImage}
+	}
+	patch := Object{"metadata": metadata}
+	if len(podPatch) != 0 {
+		patch["spec"] = Object{"template": Object{"spec": podPatch}}
+	}
 	body := Object{"appName": meta["name"], "patch": []any{Object{"type": "patch", "kind": kind, "value": patch}}}
 	// updateApp reconciles PVCs before applying the image patch. Omitted
 	// stateFulSetYaml is interpreted as removing every app-owned volume.
 	// Explicit PVC references cannot be safely reconciled from a workload alone.
 	for _, volume := range arr(at(work, "spec", "template", "spec", "volumes")) {
 		if at(volume, "persistentVolumeClaim") != nil {
-			return nil, nil, fail("UNSUPPORTED", "Image upgrades with explicit PVC references require storage reconciliation that this client cannot safely infer.")
+			return nil, fail("UNSUPPORTED", "App updates with explicit PVC references require storage reconciliation that this client cannot safely infer.")
 		}
 	}
 	if kind == "StatefulSet" {
 		claims := arr(at(work, "spec", "volumeClaimTemplates"))
 		if len(claims) == 0 {
-			return nil, nil, fail("UNSUPPORTED", "StatefulSet image upgrades require console-annotated volume claim templates.")
+			return nil, fail("UNSUPPORTED", "StatefulSet updates require console-annotated volume claim templates.")
 		}
 		paths := map[string]bool{}
 		for _, claim := range claims {
 			path := str(at(claim, "metadata", "annotations", "path"))
 			if path == "" || paths[path] || str(at(claim, "metadata", "annotations", "value")) == "" {
-				return nil, nil, fail("UNSUPPORTED", "Volume claim templates need unique console path annotations and size annotations; refusing unsafe PVC reconciliation.")
+				return nil, fail("UNSUPPORTED", "Volume claim templates need unique console path annotations and size annotations; refusing unsafe PVC reconciliation.")
 			}
 			paths[path] = true
 		}
 		stateful := obj(clone(work))
-		obj(at(stateful, "spec", "template", "spec"))["containers"] = updated
+		for key, value := range podPatch {
+			obj(at(stateful, "spec", "template", "spec"))[key] = value
+		}
 		serialized, err := json.Marshal(stateful) // JSON is also valid YAML.
 		if err != nil {
-			return nil, nil, fail("INPUT", "Cannot encode StatefulSet storage preservation data.")
+			return nil, fail("INPUT", "Cannot encode StatefulSet storage preservation data.")
 		}
 		body["stateFulSetYaml"] = string(serialized)
 	}
-	return body, diff, nil
+	return body, nil
 }
 
 func sameJSON(a, b any) bool { return reflect.DeepEqual(clone(a), clone(b)) }

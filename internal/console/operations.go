@@ -273,12 +273,37 @@ func (o Operations) Upgrade(appName, target, container string, execute bool, wai
 	if err != nil {
 		return nil, err
 	}
-	path, method, concurrency := "/api/updateApp", "POST", "resourceVersion in merge patch"
 	kept := []any{}
 	for _, c := range arr(at(w, "spec", "template", "spec", "containers")) {
 		kept = append(kept, at(c, "name"))
 	}
-	plan := Object{"operation": "app.upgrade", "api": "console", "method": method, "path": path, "namespace": o.Namespace, "name": appName, "diff": diff, "resourceVersion": at(w, "metadata", "resourceVersion"), "concurrency": concurrency, "preservedContainers": kept, "executed": false}
+	plan := o.appUpdatePlan("app.upgrade", appName, w, diff)
+	plan["preservedContainers"] = kept
+	return o.applyAppUpdate(appName, w, body, plan, "image-updated-and-verified", execute, wait)
+}
+
+func (o Operations) UpdateApp(appName string, raw Object, execute bool, wait time.Duration) (Object, error) {
+	w, err := o.Workload(appName)
+	if err != nil {
+		return nil, err
+	}
+	body, diff, err := appContainerUpdate(w, raw)
+	if err != nil {
+		return nil, err
+	}
+	plan := o.appUpdatePlan("app.update", appName, w, diff)
+	return o.applyAppUpdate(appName, w, body, plan, "updated-and-verified", execute, wait)
+}
+
+const updateAppPath = "/api/updateApp"
+
+func (o Operations) appUpdatePlan(operation, name string, work, diff Object) Object {
+	return Object{"operation": operation, "api": "console", "method": "POST", "path": updateAppPath,
+		"namespace": o.Namespace, "name": name, "diff": diff, "resourceVersion": at(work, "metadata", "resourceVersion"),
+		"concurrency": "resourceVersion in merge patch", "executed": false}
+}
+
+func (o Operations) applyAppUpdate(appName string, before, body, plan Object, verifiedState string, execute bool, wait time.Duration) (Object, error) {
 	if body == nil {
 		plan["state"] = "unchanged"
 		return plan, nil
@@ -290,27 +315,40 @@ func (o Operations) Upgrade(appName, target, container string, execute bool, wai
 	if err != nil {
 		return nil, err
 	}
-	if at(latest, "metadata", "resourceVersion") != at(w, "metadata", "resourceVersion") {
+	uid := at(before, "metadata", "uid")
+	if at(latest, "metadata", "resourceVersion") != at(before, "metadata", "resourceVersion") || at(latest, "metadata", "uid") != uid {
 		return nil, fail("CONFLICT", "Workload changed during planning. No write sent; generate a new plan.")
 	}
-	if _, err = o.call("applaunchpad", method, path, body, true); err != nil {
+	if _, err = o.call("applaunchpad", "POST", updateAppPath, body, true); err != nil {
 		return nil, err
 	}
 	after, err := o.Workload(appName)
-	expected := obj(clone(w["spec"]))
-	for _, c := range arr(at(expected, "template", "spec", "containers")) {
-		if at(c, "name") == diff["container"] {
-			obj(c)["image"] = target
-		}
+	patch := at(arr(body["patch"])[0], "value")
+	expected := obj(clone(before["spec"]))
+	for field, value := range obj(at(patch, "spec", "template", "spec")) {
+		obj(at(expected, "template", "spec"))[field] = value
 	}
-	if err != nil || !sameJSON(after["spec"], expected) {
-		return nil, fail("WRITE_UNVERIFIED", "Write was accepted but image-only preservation could not be verified. Inspect the app; no retry or rollback sent.")
+	originImage := at(patch, "metadata", "annotations", "originImageName")
+	if originImage == nil {
+		originImage = at(before, "metadata", "annotations", "originImageName")
+	}
+	matches := func(work Object) bool {
+		return work["kind"] == before["kind"] && at(work, "metadata", "uid") == uid &&
+			at(work, "metadata", "annotations", "originImageName") == originImage
+	}
+	if err != nil || !matches(after) || !sameJSON(after["spec"], expected) {
+		return nil, fail("WRITE_UNVERIFIED", "Write was accepted but the requested workload state could not be verified. Inspect the app; no retry or rollback sent.")
 	}
 	plan["executed"] = true
-	plan["state"] = "image-updated-and-verified"
+	plan["state"] = verifiedState
 	plan["app"] = AppSummary(after)
 	if wait > 0 {
-		rollout, e := o.WaitApp(appName, wait, target, str(diff["container"]))
+		rollout, e := o.waitApp(appName, wait, func(current Object) error {
+			if !matches(current) || !sameJSON(at(current, "spec", "template"), at(expected, "template")) {
+				return fail("CONFLICT", "Target workload changed while waiting; another operation may be in progress.")
+			}
+			return nil
+		})
 		if e != nil {
 			return nil, e
 		}
@@ -328,6 +366,20 @@ func sleepUntil(end time.Time) {
 	}
 }
 func (o Operations) WaitApp(n string, timeout time.Duration, image, container string) (Object, error) {
+	if image == "" {
+		return o.waitApp(n, timeout, nil)
+	}
+	return o.waitApp(n, timeout, func(w Object) error {
+		for _, c := range arr(at(w, "spec", "template", "spec", "containers")) {
+			if at(c, "name") == container && at(c, "image") == image {
+				return nil
+			}
+		}
+		return fail("CONFLICT", "Target image changed while waiting; another operation may be in progress.")
+	})
+}
+
+func (o Operations) waitApp(n string, timeout time.Duration, verify func(Object) error) (Object, error) {
 	end := time.Now().Add(timeout)
 	for {
 		w, err := o.Workload(n)
@@ -336,15 +388,9 @@ func (o Operations) WaitApp(n string, timeout time.Duration, image, container st
 		}
 		status, spec := obj(w["status"]), obj(w["spec"])
 		replicas := num(spec["replicas"])
-		if image != "" {
-			match := false
-			for _, c := range arr(at(spec, "template", "spec", "containers")) {
-				if at(c, "name") == container && at(c, "image") == image {
-					match = true
-				}
-			}
-			if !match {
-				return nil, fail("CONFLICT", "Target image changed while waiting; another operation may be in progress.")
+		if verify != nil {
+			if err := verify(w); err != nil {
+				return nil, err
 			}
 		}
 		observed := num(status["observedGeneration"]) >= num(at(w, "metadata", "generation")) && num(at(w, "metadata", "generation")) > 0

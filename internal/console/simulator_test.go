@@ -61,6 +61,17 @@ func TestCLIEndToEndAgainstLocalHTTP(t *testing.T) {
 	if out["state"] != "image-updated-and-verified" {
 		t.Fatal("complex upgrade not verified")
 	}
+	update := `{"containers":[{"name":"worker","image":"busybox:1.37.0","env":[{"name":"MODE","value":"test"}]}],
+		"initContainers":[{"name":"migrate","image":"busybox:1.37.0","env":[{"name":"MODE","value":"test"}]}],
+		"originImageName":"busybox:1.37.0"}`
+	preview := invoke(update, "app", "update", "worker", "--file", "-")
+	if preview["executed"] != false || len(arr(at(preview, "diff", "initContainers"))) != 1 {
+		t.Fatal("update preview did not identify the init container")
+	}
+	updated := invoke(update, "app", "update", "worker", "--file", "-", "--execute", "--wait", "1")
+	if updated["state"] != "updated-and-verified" || at(updated, "rollout", "state") != "ready" {
+		t.Fatal("multi-container update was not verified")
+	}
 	for _, name := range []string{"created-app", "created-stateful"} {
 		config := appConfig()
 		config["name"] = name

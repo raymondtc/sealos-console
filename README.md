@@ -194,6 +194,8 @@ No automatic retry or rollback is performed after a failed/uncertain write. Cros
 
 `--wait SECONDS` waits for observed generation and updated/ready replicas. Without it, a successful write verifies configuration and platform visibility, not workload health.
 
+Use `app update NAME --file UPDATE.json` when a rollout needs coordinated image or literal environment changes across regular containers and init containers. It previews one workload patch and applies it with `--execute`. See the [app update input and examples](skills/sealos-console/references/operations.md#coordinated-app-updates).
+
 ## Create a managed database
 
 ```sh

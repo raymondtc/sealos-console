@@ -45,7 +45,7 @@ sealos-console --profile NAME --workspace NAMESPACE app upgrade APP --container 
 
 For a new public HTTP endpoint, set `ports[].public=true`. Use `app domains` for available platform domains; `ports[].domain` optionally selects one. Preview URLs are not reserved and change when execution generates fresh prefixes. Report URLs from the executed result; routing read-back and workload readiness do not establish external reachability. Custom domains and public TCP/UDP forwarding are not implemented.
 
-For image upgrades, query the app first. Specify `--container` for multiple containers. Image upgrades preserve original arrays and unknown fields. Never drop `fieldRef`, sidecars, probes or mounts to make a schema accept the workload.
+For image upgrades, query the app first. Specify `--container` for multiple containers. Use `app update APP --file UPDATE.json` when regular and init containers must change in the same rollout or when updating literal env alongside images. Select each container in its exact array. Preserve environment references, sidecars, probes, and mounts.
 
 After authorized execution use `--wait SECONDS`, or `app wait APP`, when readiness matters. Distinguish configuration accepted/visible from rollout ready. A failed, timed-out or unverifiable write must be followed by inspection, not automatic retry or rollback.
 

@@ -41,6 +41,61 @@ func copyJSON(v any) any {
 	_ = json.Unmarshal(b, &out)
 	return out
 }
+
+func validContainerUpdate(old, updated []any) bool {
+	if len(old) == 0 || len(old) != len(updated) {
+		return false
+	}
+	for i := range old {
+		before, after := objectOf(copyJSON(old[i])), objectOf(copyJSON(updated[i]))
+		if text(after["image"]) == "" || !validEnvUpdate(list(before["env"]), list(after["env"])) {
+			return false
+		}
+		delete(before, "image")
+		delete(after, "image")
+		delete(before, "env")
+		delete(after, "env")
+		if !reflect.DeepEqual(before, after) {
+			return false
+		}
+	}
+	return true
+}
+
+func validEnvUpdate(old, updated []any) bool {
+	if len(old) > len(updated) {
+		return false
+	}
+	for i, v := range updated {
+		after := objectOf(copyJSON(v))
+		if i < len(old) {
+			before := objectOf(copyJSON(old[i]))
+			if reflect.DeepEqual(before, after) {
+				continue
+			}
+			if before["valueFrom"] != nil {
+				return false
+			}
+			delete(before, "value")
+			delete(after, "value")
+			if !reflect.DeepEqual(before, after) {
+				return false
+			}
+		} else {
+			delete(after, "value")
+			if len(after) != 1 || text(after["name"]) == "" {
+				return false
+			}
+		}
+		if value := lookup(v, "value"); value != nil {
+			if _, ok := value.(string); !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func number(v any) float64  { n, _ := v.(float64); return n }
 func good(v any) (int, any) { return 200, object{"code": 200, "data": v} }
 func bad(status int, message string) (int, any) {
@@ -77,6 +132,10 @@ func New(baseURL, fault string) *Server {
 	main["volumeMounts"] = []any{object{"name": "cache", "mountPath": "/cache"}}
 	pod["volumes"] = []any{object{"name": "cache", "emptyDir": object{}}}
 	pod["containers"] = append(list(pod["containers"]), object{"name": "sidecar", "image": "busybox:1.36.0", "args": []any{"sleep", "3600"}})
+	pod["initContainers"] = []any{object{
+		"name": "migrate", "image": "busybox:1.36.0", "args": []any{"true"},
+		"envFrom": []any{object{"secretRef": object{"name": "worker-config"}}},
+	}}
 	s.apps["worker"] = worker
 	return s
 }
@@ -309,30 +368,28 @@ func (s *Server) route(method, path, credential string, body object) (int, any, 
 			a, b := bad(409, "resourceVersion conflict.")
 			return respond(a, b)
 		}
-		old, newContainers := list(lookup(w, "spec", "template", "spec", "containers")), list(lookup(patch, "spec", "template", "spec", "containers"))
-		if len(old) != len(newContainers) {
-			a, b := bad(400, "Container preservation failed.")
+		podPatch := objectOf(lookup(patch, "spec", "template", "spec"))
+		pod := objectOf(lookup(w, "spec", "template", "spec"))
+		if patch["spec"] != nil && (len(objectOf(patch["spec"])) != 1 || len(objectOf(lookup(patch, "spec", "template"))) != 1 || len(podPatch) == 0) {
+			a, b := bad(400, "Invalid pod template patch.")
 			return respond(a, b)
 		}
-		changed := 0
-		for i, c := range old {
-			before, after := objectOf(copyJSON(c)), objectOf(copyJSON(newContainers[i]))
-			if before["image"] != after["image"] {
-				changed++
-			}
-			delete(before, "image")
-			delete(after, "image")
-			if !reflect.DeepEqual(before, after) {
-				a, b := bad(400, "Non-image container changes refused by simulator.")
+		for key, value := range podPatch {
+			if (key != "containers" && key != "initContainers") || !validContainerUpdate(list(pod[key]), list(value)) {
+				a, b := bad(400, "Container preservation failed.")
 				return respond(a, b)
 			}
 		}
-		if changed != 1 || len(objectOf(lookup(patch, "spec"))) != 1 || len(objectOf(lookup(patch, "spec", "template"))) != 1 || len(objectOf(lookup(patch, "spec", "template", "spec"))) != 1 {
-			a, b := bad(400, "Exactly one image change is required.")
+		annotations := objectOf(lookup(patch, "metadata", "annotations"))
+		if (len(annotations) != 0 && (len(annotations) != 1 || text(annotations["originImageName"]) == "")) ||
+			(len(podPatch) == 0 && len(annotations) == 0) {
+			a, b := bad(400, "Invalid update fields.")
 			return respond(a, b)
 		}
-		objectOf(lookup(w, "spec", "template", "spec"))["containers"] = newContainers
-		for k, v := range objectOf(lookup(patch, "metadata", "annotations")) {
+		for key, value := range podPatch {
+			pod[key] = value
+		}
+		for k, v := range annotations {
 			objectOf(lookup(w, "metadata", "annotations"))[k] = v
 		}
 		s.markReady(w)

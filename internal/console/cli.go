@@ -25,6 +25,7 @@ Usage:
   sealos-console app list | app get NAME | app domains | app wait NAME
   sealos-console app create --file app.json [--execute] [--wait 120]
   sealos-console app upgrade NAME --image IMAGE [--container NAME] [--execute]
+  sealos-console app update NAME --file UPDATE.json [--execute] [--wait SECONDS]
   sealos-console app pods|events|stats NAME
   sealos-console app logs NAME [--pod POD] [--container NAME] [--tail 100] [--since 1h] [--follow]
   sealos-console app metrics NAME [--metric cpu|memory] [--since 1h]
@@ -201,7 +202,7 @@ func commandShape(pos []string) error {
 		return devboxCommandShape(pos)
 	}
 	key := pos[0] + " " + pos[1]
-	counts := map[string]int{"skill install": 2, "skill update": 2, "skill uninstall": 2, "skill status": 2, "app pods": 3, "app logs": 3, "app events": 3, "app stats": 3, "app metrics": 3, "db pods": 3, "db logs": 3, "db events": 3, "db metrics": 3, "storage connect": 2, "storage buckets": 2, "storage bucket": 3, "storage create": 3, "storage ls": 3, "storage upload": 4, "storage download": 4, "auth login": 2, "auth status": 2, "auth logout": 2, "workspace list": 2, "app domains": 2, "app list": 2, "app get": 3, "app create": 2, "app upgrade": 3, "app wait": 3, "db list": 2, "db get": 3, "db engines": 2, "db create": 2}
+	counts := map[string]int{"skill install": 2, "skill update": 2, "skill uninstall": 2, "skill status": 2, "app pods": 3, "app logs": 3, "app events": 3, "app stats": 3, "app metrics": 3, "db pods": 3, "db logs": 3, "db events": 3, "db metrics": 3, "storage connect": 2, "storage buckets": 2, "storage bucket": 3, "storage create": 3, "storage ls": 3, "storage upload": 4, "storage download": 4, "auth login": 2, "auth status": 2, "auth logout": 2, "workspace list": 2, "app domains": 2, "app list": 2, "app get": 3, "app create": 2, "app upgrade": 3, "app update": 3, "app wait": 3, "db list": 2, "db get": 3, "db engines": 2, "db create": 2}
 	if n, ok := counts[key]; !ok || len(pos) != n {
 		return fail("INPUT", "Unknown command or incorrect positional arguments; use --help.")
 	}
@@ -285,7 +286,7 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 		rows, e := s.Workspaces()
 		return Object{"workspaces": rows}, e
 	}
-	writing := len(pos) > 1 && (pos[1] == "create" || pos[1] == "upgrade" || pos[1] == "upload" || pos[1] == "connect")
+	writing := len(pos) > 1 && (pos[1] == "create" || pos[1] == "upgrade" || pos[1] == "update" || pos[1] == "upload" || pos[1] == "connect")
 	if pos[0] == "devbox" {
 		writing = devboxWrites(pos)
 	}
@@ -355,6 +356,18 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 		return ops.CreateApp(raw, o.execute, wait)
 	case "app upgrade":
 		return ops.Upgrade(pos[2], o.image, o.container, o.execute, wait)
+	case "app update":
+		if o.execute && o.dryRun {
+			return nil, fail("INPUT", "Use either --dry-run or --execute.")
+		}
+		if o.image != "" || o.container != "" {
+			return nil, fail("INPUT", "Specify container names and images in the update file.")
+		}
+		raw, e := readConfig(o.file, stdin)
+		if e != nil {
+			return nil, e
+		}
+		return ops.UpdateApp(pos[2], raw, o.execute, wait)
 	case "db list":
 		rows, e := ops.Databases()
 		return Object{"namespace": s.Namespace, "api": "console", "items": rows}, e
