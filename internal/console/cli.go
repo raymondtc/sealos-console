@@ -27,6 +27,7 @@ Usage:
   sealos-console app upgrade NAME --image IMAGE [--container NAME] [--execute]
   sealos-console app update NAME --file UPDATE.json [--execute] [--wait SECONDS]
   sealos-console app pods|events|stats NAME
+  sealos-console app exec NAME [--pod POD] [--container NAME] [--execute] [--timeout SECONDS] [--json] -- COMMAND [ARGS...]
   sealos-console app logs NAME [--pod POD] [--container NAME] [--tail 100] [--since 1h] [--follow]
   sealos-console app metrics NAME [--metric cpu|memory] [--since 1h]
   sealos-console db pods|events|logs|metrics NAME
@@ -136,7 +137,7 @@ func parse(args []string) (options, []string, error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
-			if len(pos) >= 2 && pos[0] == "devbox" && pos[1] == "exec" {
+			if len(pos) >= 2 && (pos[0] == "devbox" || pos[0] == "app") && pos[1] == "exec" {
 				o.command = args[i+1:]
 			} else {
 				pos = append(pos, args[i+1:]...)
@@ -208,6 +209,9 @@ func commandShape(pos []string) error {
 		return dbBackupCommandShape(pos)
 	}
 	key := pos[0] + " " + pos[1]
+	if key == "app exec" && len(pos) == 3 {
+		return nil
+	}
 	counts := map[string]int{"skill install": 2, "skill update": 2, "skill uninstall": 2, "skill status": 2, "app pods": 3, "app logs": 3, "app events": 3, "app stats": 3, "app metrics": 3, "db pods": 3, "db logs": 3, "db events": 3, "db metrics": 3, "storage connect": 2, "storage buckets": 2, "storage bucket": 3, "storage create": 3, "storage ls": 3, "storage upload": 4, "storage download": 4, "auth login": 2, "auth status": 2, "auth logout": 2, "workspace list": 2, "app domains": 2, "app list": 2, "app get": 3, "app create": 2, "app upgrade": 3, "app update": 3, "app wait": 3, "db list": 2, "db get": 3, "db engines": 2, "db create": 2}
 	if n, ok := counts[key]; !ok || len(pos) != n {
 		return fail("INPUT", "Unknown command or incorrect positional arguments; use --help.")
@@ -299,6 +303,9 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 	if pos[0] == "db" && pos[1] == "backup" {
 		writing = pos[2] == "create"
 	}
+	if pos[0] == "app" && pos[1] == "exec" {
+		writing = true
+	}
 	if err = s.Bind(o.workspace, writing); err != nil {
 		return nil, err
 	}
@@ -349,6 +356,8 @@ func run(o options, pos []string, stdin io.Reader) (result any, err error) {
 		}
 	}
 	switch pos[0] + " " + pos[1] {
+	case "app exec":
+		return s.appExec(pos[2], o)
 	case "db backup":
 		return runDBBackup(s, o, pos, wait)
 	case "app domains":
@@ -438,6 +447,13 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, version strin
 			_ = json.NewEncoder(stderr).Encode(Object{"error": publicFailure(err)})
 		}
 		return code
+	}
+	if result, ok := result.(*appExecResult); ok {
+		if err := result.write(stdout, o.json); err != nil {
+			_ = json.NewEncoder(stderr).Encode(Object{"error": publicFailure(err)})
+			return 1
+		}
+		return result.code
 	}
 	if stream, ok := result.(*LogStream); ok {
 		defer stream.Close()

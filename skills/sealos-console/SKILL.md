@@ -29,6 +29,8 @@ Queries use the console inventory and retain applications with multiple containe
 
 For observation and object storage, read [references/observe-storage.md](references/observe-storage.md). It covers log/container selection, missing metrics, S3 setup, bucket creation and file transfers. `storage connect --execute` can initialize a user; do not run it implicitly during read-only work. Preserve the user-selected scope for creation/uploads and avoid automatic retries after uncertain writes.
 
+To run an image's own executable in an app Pod, preview `app exec APP -- COMMAND [ARGS...]`. With authorization, add `--execute` to use the managed Sealos Terminal. Use explicit Pod and container names when there is more than one choice.
+
 ## Create or upgrade
 
 For DevBox template discovery, creation, public previews, remote commands, releases, and start/stop, read [references/devbox.md](references/devbox.md). Use `devbox ports` to inspect URLs and `devbox public on|off` to preview changes to an existing HTTP port. A DevBox is scoped to the selected workspace. Template conversion starts from a successful release and creates a private template.

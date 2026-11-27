@@ -3,6 +3,7 @@ package console
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -104,6 +105,10 @@ func (t *Transport) Send(base, method, path, credential string, body any, envelo
 }
 
 func (t *Transport) request(client *http.Client, base, method, path, credential, bearer string, body any) (*http.Response, error) {
+	return t.requestContext(context.Background(), client, base, method, path, credential, bearer, body)
+}
+
+func (t *Transport) requestContext(ctx context.Context, client *http.Client, base, method, path, credential, bearer string, body any) (*http.Response, error) {
 	base, err := originFor(base, t.LocalTest)
 	if err != nil {
 		return nil, err
@@ -119,7 +124,7 @@ func (t *Transport) request(client *http.Client, base, method, path, credential,
 		}
 		reader = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, base+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, base+path, reader)
 	if err != nil {
 		return nil, fail("CONFIG", "Invalid request URL.")
 	}
@@ -418,7 +423,7 @@ func (s *Session) Providers() (map[string]string, error) {
 	found := map[string]string{}
 	for _, row := range rows {
 		key := str(at(row, "key"))
-		if key != "system-applaunchpad" && key != "system-dbprovider" && key != "system-objectstorage" && key != "system-devbox" {
+		if key != "system-applaunchpad" && key != "system-dbprovider" && key != "system-objectstorage" && key != "system-devbox" && key != "system-terminal" {
 			continue
 		}
 		base, e := originFor(str(at(row, "data", "url")), s.Profile.LocalTest)

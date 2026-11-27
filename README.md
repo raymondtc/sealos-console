@@ -1,11 +1,12 @@
 # sealos-console
 
-A small, dependency-free Go CLI and agent skill for Sealos application operations.
+A small, standalone Go CLI and agent skill for Sealos application operations.
 
 - Query workspaces, apps and managed databases.
 - Create apps and databases through **console APIs**, including platform-managed public HTTP/HTTPS endpoints.
 - Update an image by **container name**, preserving sidecars, environment references, probes and mounts.
 - Inspect app/database Pods, logs, events and CPU/memory history; inspect all app container usage.
+- Run a program in an app Pod through the managed Sealos Terminal.
 - List/create object-storage buckets and list/upload/download objects through console-managed S3 access.
 - Create DevBoxes from templates, toggle public previews, run commands and publish releases.
 - Preview writes by default; use `--execute` to submit them.
@@ -229,6 +230,15 @@ sealos-console db metrics DB --metric memory --since 1h
 Logs require an explicit Pod unless there is exactly one; multi-container app logs also require a container name. Snapshots are JSON; followed logs emit JSON lines and stop after the timeout. Empty logs/series report `no-data`. App stats preserve all returned containers, report missing Pods and retain Kubernetes resource quantity units. Pod status/restarts are the console's primary-container summary. Historical metric units follow the platform; some server versions pad missing points with zeros.
 
 `--previous` reads the previous container instance. Follow mode uses the server's initial tail of up to 1000 lines regardless of `--tail`. Logs/event messages may contain application secrets and are not automatically redacted. Database connection metrics, deleted-Pod log search and alert management are outside this release. See [detailed observation behavior](skills/sealos-console/references/observe-storage.md).
+
+## Run a program in an app Pod
+
+```sh
+sealos-console --workspace NAMESPACE app exec demo -- /path/to/program --version
+sealos-console --workspace NAMESPACE app exec demo --execute -- /path/to/program --version
+```
+
+The preview resolves the target Pod and container. Add `--pod` or `--container` when there is more than one choice. Execution uses the platform's managed Sealos Terminal and may start your temporary Terminal instance. The target container runs the named executable directly, so it can be a shell-free image. See the [execution details](skills/sealos-console/references/observe-storage.md#run-a-program-in-an-app-pod).
 
 ## DevBox
 

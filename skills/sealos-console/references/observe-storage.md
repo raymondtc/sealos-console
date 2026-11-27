@@ -1,4 +1,4 @@
-# Logs, metrics and object storage
+# Logs, metrics, Pod commands and object storage
 
 ## Observation
 
@@ -25,6 +25,17 @@ App `stats` retains every returned container and reports missing Pods explicitly
 Historical metrics support CPU/memory, 1s–24h lookback and a fixed one-minute step. Values and granularity follow the platform response; do not assume identical units across component versions. Historical series may include replaced Pods. Missing series are `state: no-data`, not measured zero; some server versions themselves pad missing points with zeros. Database connection counts, central/deleted-Pod log search and alert management are not implemented.
 
 Logs and event messages contain application output and may include sensitive information. Summarize only what the user needs; the CLI does not redact arbitrary application logs.
+
+## Run a program in an app Pod
+
+```sh
+sealos-console --workspace NAMESPACE app exec APP --pod POD --container CONTAINER -- /path/to/program --version
+sealos-console --workspace NAMESPACE app exec APP --pod POD --container CONTAINER --execute --timeout 120 -- /path/to/program --version
+```
+
+Pass the executable and each argument after `--`. The target image must contain that executable. The command runs once, without stdin or a target TTY. The CLI returns merged output after completion and propagates the exit code from the Terminal's `kubectl exec`. Use `--json` for the target, output, and exit code. Output is limited to 8 MiB.
+
+Preview reads the application and Pod inventory. Execution may start the user's managed Sealos Terminal and uses its existing workspace access. The provider needs a supported authenticated ttyd session. If the session disconnects or times out before the exit marker, inspect the target before trying again.
 
 ## Object storage
 
